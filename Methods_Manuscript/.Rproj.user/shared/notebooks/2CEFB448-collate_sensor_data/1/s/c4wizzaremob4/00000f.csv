@@ -1,0 +1,6 @@
+"0","reform <- function (site_files_arg) {"
+"0","  site_files_arg <- gsub("".CSV|\"""","""",site_files_arg)"
+"0","  site_files_arg <- gsub(""^"",""23-"",site_files_arg)"
+"0","  site_files_arg <- as.POSIXct(site_files_arg,format=""%y-%m-%d-%H"")"
+"0","  format(site_files_arg,""%m-%d-%H"")"
+"0","}"

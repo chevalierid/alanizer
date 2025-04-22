@@ -1,0 +1,5 @@
+"0","sensor_data[, Treatment := fcase("
+"0","  sensor_data$Amber & sensor_data$White, ""C"","
+"0","  sensor_data$Amber & !sensor_data$White, ""A"","
+"0","  !sensor_data$Amber & sensor_data$White, ""W"""
+"0",")]"

@@ -1,0 +1,4 @@
+"0",""
+"0","# match row in sensor_data to row in manual_changepoints"
+"0","sensor_data[manual_changepoints, `:=` (Changepoint = i.Timestamp, Treatment = i.Treatment), on = .(Folder,LabelledSite,Timestamp)]"
+"0","sensor_data[Changepoint %in% manual_changepoints$Timestamp]"

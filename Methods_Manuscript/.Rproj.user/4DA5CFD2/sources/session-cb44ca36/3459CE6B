@@ -1,0 +1,27 @@
+{
+    "id": "3459CE6B",
+    "path": "~/Documents/alan-setup/prog/refactored/scripts/collate_sensor_data.Rmd",
+    "project_path": "scripts/collate_sensor_data.Rmd",
+    "type": "r_markdown",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1718662511660.0,
+    "source_on_save": false,
+    "relative_order": 1,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "40,0",
+        "scrollLine": "0",
+        "last_setup_crc32": ""
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1719941927,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1719941927869,
+    "read_only": false,
+    "read_only_alternatives": []
+}

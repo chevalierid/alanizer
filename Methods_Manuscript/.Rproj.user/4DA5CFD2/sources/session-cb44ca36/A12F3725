@@ -1,0 +1,26 @@
+{
+    "id": "A12F3725",
+    "path": "~/Documents/alan-setup/prog/refactored/scripts/biomass.R",
+    "project_path": "scripts/biomass.R",
+    "type": "r_source",
+    "hash": "1257224332",
+    "contents": "",
+    "dirty": false,
+    "created": 1718662891026.0,
+    "source_on_save": false,
+    "relative_order": 6,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "213,0",
+        "scrollLine": "207"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1724529163,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1724529163674,
+    "read_only": false,
+    "read_only_alternatives": []
+}

@@ -1,0 +1,54 @@
+"0","raw_output <- lapply(raw_output, function(df) {"
+"0","  df$Timestamp <- with_tz(as.POSIXct(as.numeric(df$Timestamp), origin = ""1970-01-01""), ""PST"")"
+"0","  df <- subset(df, Timestamp > start_date & Timestamp < end_date)"
+"0","})"
+"2","Warning in as.POSIXct(as.numeric(df$Timestamp), origin = ""1970-01-01"") :"
+"2","
+ "
+"2"," NAs introduced by coercion
+"
+"2","Warning in as.POSIXct(as.numeric(df$Timestamp), origin = ""1970-01-01"") :"
+"2","
+ "
+"2"," NAs introduced by coercion
+"
+"2","Warning in as.POSIXct(as.numeric(df$Timestamp), origin = ""1970-01-01"") :"
+"2","
+ "
+"2"," NAs introduced by coercion
+"
+"2","Warning in as.POSIXct(as.numeric(df$Timestamp), origin = ""1970-01-01"") :"
+"2","
+ "
+"2"," NAs introduced by coercion
+"
+"2","Warning in as.POSIXct(as.numeric(df$Timestamp), origin = ""1970-01-01"") :"
+"2","
+ "
+"2"," NAs introduced by coercion
+"
+"2","Warning in as.POSIXct(as.numeric(df$Timestamp), origin = ""1970-01-01"") :"
+"2","
+ "
+"2"," NAs introduced by coercion
+"
+"2","Warning in as.POSIXct(as.numeric(df$Timestamp), origin = ""1970-01-01"") :"
+"2","
+ "
+"2"," NAs introduced by coercion
+"
+"2","Warning in as.POSIXct(as.numeric(df$Timestamp), origin = ""1970-01-01"") :"
+"2","
+ "
+"2"," NAs introduced by coercion
+"
+"2","Warning in as.POSIXct(as.numeric(df$Timestamp), origin = ""1970-01-01"") :"
+"2","
+ "
+"2"," NAs introduced by coercion
+"
+"2","Warning in as.POSIXct(as.numeric(df$Timestamp), origin = ""1970-01-01"") :"
+"2","
+ "
+"2"," NAs introduced by coercion
+"

@@ -1,0 +1,199 @@
+####################################################
+# Content: FRST 533C Assignment 6 -- PART I - one fixed factor
+# Date: October 31, 2022 - change date as needed                          
+# Author: please insert your name          
+####################################################
+
+#####################################################################
+# Cleaning up.
+#####################################################################
+
+rm(list=ls(all=TRUE))  # remove any objects left from previous runs of R
+
+#####################################################################
+# read in the data A6data.csv
+#####################################################################
+
+setwd("F:\\assignments\\A5_CRD\\A6_CRD_2022_FRST533C\\FRST533C_A6")
+A6data <- read.csv("FRST533C_CRD_one_fixed_factor.csv",header=TRUE)
+
+names(A6data)
+dim(A6data)
+
+# log tranform response - note log() is the natural log
+A6data$loght <- log(A6data$ave_ht)
+
+
+# test the class of the treatment factor
+class(A6data$trt)
+
+# If trt is not a factor yet convert it into a factor (class variable)
+# recognizable by R. -- still doing it here to use trt.f throughout
+# code and be able to easily reuse code for other data sets
+A6data$trt.f <- as.factor(A6data$trt)
+class(A6data$trt.f)
+
+# How many factor levels does trt have?
+# How many observations are there for each trt level?
+table(A6data$trt.f)
+
+names(A6data) # all variables are ready for use
+
+#########################################################################
+# 3. calculate simple means and create box plot graphs
+#########################################################################
+
+# simple means - calculated using tapply()
+tapply(A6data$ave_ht, A6data$trt.f, mean) 
+
+par(mfrow=c(1,2)) # plot formatting - one row of plots with two columns
+boxplot(ave_ht ~ trt.f, data=A6data, col='lightblue', 
+        main="Average vegetation height (m) by trt")
+boxplot(loght ~ trt.f, data=A6data, col='lightblue', 
+        main="log of average vegetation height by trt")
+par(mfrow=c(1,1)) # back to default formatting, one plot per page.
+
+#########################################################################
+# 4. Fit the linear model.
+#########################################################################
+
+model.1 <- lm(ave_ht ~ trt.f, data=A6data)
+# The model has one intercept for the control trt (the first
+# in the list) that is adjusted for other trt's.
+# This gives a unique yhat for each trt which are 
+# the trt least squares means.
+summary(model.1) # Intercept (b0) = mean of control trt.
+                 # b1 + b0 = mean of fence_2mo
+                 # b2 + b0 = mean of fence_4mo
+                 # compare mean values of treatments with simple means calculated above
+
+sum.1 <- summary(model.1) # save summary statistics to use later on.
+sum.1
+
+#########################################################################
+# 4a. test assumptions
+#########################################################################
+
+# save the yhats and residuals.
+A6data$yhat.1 <- fitted(model.1)
+A6data$resid.1 <- resid(model.1)
+A6data$stdresid.1 <- resid(model.1)/sum.1$sigma # stdresid stored
+
+A6data # show the yhat's (lsmeans) and residuals.
+
+# Diagnostic plots -- Assumptions met?
+par(mfrow=c(1,2), cex=1.0, mai=c(1.0,1.0,0.6,0.6), pty="s")
+plot(A6data$resid.1 ~ A6data$yhat.1, main="Residual Plot")  
+abline(a=0,b=0, col="red")  # residual plot
+qqnorm(A6data$stdresid.1)     # QQ plot
+qqline(A6data$stdresid.1,col=2)
+par(mfrow=c(1,1), cex=1.0, mai=c(1.0,1.0,1.0,1.0) )
+
+# Do a normality test
+shapiro.test(A6data$resid.1) # Shapiro-Wilk normality test
+
+
+######## NOTE: nothing to report here! Just included or your information!!! #############
+# Bartlett's test for equal variances
+bartlett.test(A6data$resid.1 ~ A6data$trt.f)
+# report test-statistic "Bartlett's K-squared" and associated p-value
+# H0: variances are equal --> sigma1^2 = sigma2^2 = sigma3^2
+# H1: at least one variance is unequal to the others
+
+# This alternative code also works:
+# bartlett.test(resid.1 ~ trt.f, A6data)
+
+
+####### NOTE:
+# we can also use some of the default graphs provided by R
+
+# graphs for testing assumptions
+par(mfrow = c(2,2))
+plot(model.1, which=5)
+plot(model.1, which=1)
+plot(model.1, which=2)
+plot(residuals(model.1) ~ rownames(A6data), main="Residuals vs. Exp. Unit",
+     font.main=1, data=A6data)
+abline(h=0, lty=2)
+par(mfrow = c(1,1))
+
+
+####################################################################
+# 4b) differences among treatment levels?
+#####################################################################
+#install.packages("car")
+require(car) # this package must have been loaded first! # install with install.packages("car")
+
+Anova(model.1, type=c("III")) # Type III F tests(order does not matter).
+anova(model.1) # Type I here.  Same since only one factor.
+
+# What are the hypotheses?
+# in terms of means: H0: mu1 = mu2 = ... vs. H1: not all the same
+# OR in terms of treatment effects: H0: tau1 = tau2 =... vs. H1: not all the same
+
+
+
+######################################################################
+# 5) which treatment levels differ?
+######################################################################
+
+
+# 5a) Scheffe's test
+# Scheffe's multiple comparison tests
+# install.packages("agricolae")
+library(agricolae)
+df <- df.residual(model.1)       # obtain df assoiated with SSE
+MSerror <- deviance(model.1)/df  # obtain MSE
+Fstat <- Anova(model.1)["trt.f",3] # obtain F-statistic from ANOva() output
+
+comparison <- scheffe.test(A6data$ave_ht, A6data$trt.f, df,
+                           MSerror, Fstat, alpha = 0.05, group=TRUE, main = NULL,
+                           console=FALSE )
+comparison
+# How to interpret the output from Scheffe's test?
+# Treatments with the same letter are not signficantly different,
+# while treatments with different letters are.
+
+# 5b) pairs of means t-tests
+# install.packages("emmeans")
+library(emmeans)  # The lsmeans package must be loaded first! # install with install.packages("lsmeans")
+
+# Either correct the alpha for comparisons and leave
+# the p-value alone OR leave the alpha alone
+# and correct the p-value. Both methods shown here.
+
+###
+# No correction to the p-values here. Compare the
+# p-value to alpha / no. pairs 
+# Do this in one step:
+(plots.emm <- emmeans (model.1,  pairwise~trt.f, 
+                       adjust="none",side="two-sided"))
+
+# Or in two steps:
+(plots.emm <- emmeans (model.1,  ~trt.f))
+pairs(plots.emm, adjust="none",side="two-sided") 
+
+###
+# Bonferroni adjustment to p-values here.
+# Compare these adjusted p-values to 
+# the same alpha used for the F test.
+# Do this in one step:
+(plots.emm <- emmeans (model.1,  pairwise~trt.f, 
+                       adjust="bonferroni",side="two-sided"))
+
+# Or in two steps:
+(plots.emm <- emmeans (model.1,  ~trt.f))
+pairs(plots.emm, adjust="bonferroni",side="two-sided") 
+
+
+#########################################################################
+#  Clean up all of your files, or shut down R before doing another 
+#  exercise
+#########################################################################
+
+
+
+
+
+
+

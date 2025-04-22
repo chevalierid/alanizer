@@ -1,0 +1,346 @@
+---
+title: "clean_sensor_data"
+output: html_document
+date: "2024-04-24"
+---
+
+The purpose of this file is to clean the sensor data and interpolate it so that each site shares a common timescale.
+
+```{r}
+library(data.table)
+library(lubridate)
+library(remedy)
+library(ggplot2)
+library(gtable)
+library(grid)
+```
+
+## Read in our collated data
+```{r}
+sensor_data <- fread("../raw_data/raw_sensor_data_collated.csv")
+metadata <- fread("../raw_data/raw_sensor_metadata_collated.csv")
+```
+
+## Remove bad/corrupted files where sensor_data LabelledSite is 0 and metadata Site is NA
+```{r}
+sensor_data <- sensor_data[sensor_data$LabelledSite %in% 1:12,]
+```
+
+## Sort by time
+```{r}
+setorder(sensor_data,cols="Timestamp")
+```
+
+### Make column for treatment (converting amber/white/on)
+
+ A | W | O | Override | State
+-------------------------
+ 0 | 1 | 1 | 0 | white, on
+ 0 | 1 | 0 | 0 | white, off
+ 0 | 1 | 1 | 1 | white, off, override
+ 1 | 1 | 1 | 0 | control, on
+ 1 | 1 | 0 | 0 | control, off
+ 1 | 1 | 1 | 1 | control, off, override
+ 1 | 0 | 1 | 0 | amber, on
+ 1 | 0 | 0 | 0 | amber, off
+ 1 | 0 | 1 | 1 | amber, off, override
+ 
+ 
+A=0 W=1: white
+A=1 W=0: amber
+A=1 W=1: control
+
+Compute treatment column as follows:
+* control = A & W
+* amber = A & !W
+* white = !A & W
+
+```{r}
+sensor_data[, Treatment := fcase(
+  sensor_data$Amber & sensor_data$White, "C",
+  sensor_data$Amber & !sensor_data$White, "A",
+  !sensor_data$Amber & sensor_data$White, "W"
+)]
+```
+
+Any NA-treatment observations should be removed (checked).
+```{r}
+#sensor_data <- sensor_data[!is.na(Treatment)]
+```
+
+## Sites and states
+
+For each labelled site and folder, we must retrieve actual site and state from metadata. 
+
+This is harder than it first appears. We first must find the time interval corresponding to each data table entry. The metadata table contains each site's scheduled treatment for each 5-day interval and refers to each interval by its start date. In practice, the sites' states were changed on a regular schedule, but sometime during the day (slightly after the theoretical start date) rather than at midnight. We must make sure that all data corresponding to each interval is associated with that interval's start date. 
+
+We first find points in time where treatment changed and create a new column for these timestamps (titled Changepoints).
+
+```{r}
+setorder(sensor_data,LabelledSite,Timestamp)
+
+# here we get the row indices of every change point by site
+# have to manually handle firsts, both by folder and site
+sensor_data[Treatment != shift(Treatment, 1L, type="lag") | 
+            Timestamp %in% sensor_data[!duplicated(sensor_data[,c("LabelledSite","Folder"),with=F])]$Timestamp, 
+            Changepoint := Timestamp, by=.(LabelledSite,Folder)]
+  
+# have to manually handle when it's been too long since a changepoint (to capture times where there was a long gap in data collection), by folder and site
+```
+
+
+We add manual changepoints for exceptional cases. We also add a special treatment marker to correct the treatment column because some had a wiggly input cable and consequently many NA treatment values.
+```{r}
+# match based on LabelledSite, Folder, and Timestamp
+manual_changepoints <- fread("../raw_data/Collection Date Site Treatment and Notes(Manual).csv")
+manual_changepoints[, `:=` (Timestamp = gsub("\xa0"," ",Timestamp), LastPoint = gsub("\xa0"," ",LastPoint))]
+manual_changepoints[, `:=` (Timestamp = as.POSIXct(Timestamp, origin = "1970-01-01", tz="PST"),
+                      LastPoint = as.POSIXct(LastPoint, origin = "1970-01-01", tz="PST"))]
+manual_changepoints[, Treatment := gsub("$","*",Treatment)]
+manual_changepoints
+sensor_data[Changepoint %in% manual_changepoints$Timestamp]
+
+# match row in sensor_data to row in manual_changepoints
+sensor_data[manual_changepoints, `:=` (Changepoint = i.Timestamp, Treatment = i.Treatment), on = .(Folder,LabelledSite,Timestamp)]
+sensor_data[Changepoint %in% manual_changepoints$Timestamp]
+#length(grep("*", sensor_data$Treatment, fixed=TRUE))
+
+find_data <- sensor_data[Folder == 1 & Timestamp > as.POSIXct("2023-07-06 09:52:11", origin = "1970-01-01", tz = "PST")
+                                            & Timestamp < as.POSIXct("2023-07-13 10:30:24", origin = "1970-01-01", tz = "PST")]
+
+```
+
+For each changepoint, we find the most recent start date in a new column, StartDate. 
+```{r}
+# set each value of StartDate to the closest entry in unique(metadata$StartDate)
+maxless <- function(input, labels) {
+  return(as.POSIXct(max(as.numeric(as.POSIXct(labels,origin="1970-01-01",tz="PST"))
+                        [as.numeric(as.POSIXct(labels,origin="1970-01-01",tz="PST")) <= as.numeric(input)]),origin="1970-01-01",tz="PST"))
+}
+
+sensor_data[, StartDate := maxless(Changepoint, unique(metadata$StartDate)), by=1:nrow(sensor_data)]
+```
+
+
+
+Then we fill that column downward.
+```{r}
+sensor_data[, StartDate := nafill(StartDate, type="locf")]
+sensor_data[, StartDate := as.Date(StartDate)]
+```
+
+Then we add a Site column based on LabelledSite, Folder, and StartDate.
+```{r}
+sensor_data[metadata, Site := i.Site, on = .(LabelledSite,Folder,StartDate)]
+```
+
+We also need to correct the treatment column for some manual-changepoint entries.
+```{r}
+# select combination of folder + labelledsite + startdate where sensor_data[grep("*",Treatment)]
+
+sensor_data[sensor_data[which(Treatment %like% "\\*")], Treatment := ifelse(!Treatment %like% "\\*", NA, Treatment),
+            on=.(Site, StartDate)]
+sensor_data[, Treatment := gsub("*", "", Treatment, fixed = TRUE)]
+sensor_data[, Treatment := Treatment[nafill(replace(.I, is.na(Treatment), NA), "locf")]]
+
+sensor_data[metadata, Site := i.Site, on = .(LabelledSite,Folder,StartDate)]
+```
+
+
+```{r}
+pdf("../plots/changepoints_after.pdf", w=16, h=9)
+ggplot() +
+  geom_point(data=sensor_data, aes(x=Timestamp,y=Treatment,colour=as.factor(Folder),alpha=0.5)) +
+  geom_point(data=metadata, aes(x=as.POSIXct(StartDate,origin="1970-01-01",tz="PST"),y=PrescribedTreatment,alpha=0.5)) +
+  geom_point(data=sensor_data, aes(x=Changepoint,y=Treatment,colour="red")) +
+  scale_x_datetime(
+    breaks=seq(min(as.POSIXct(metadata$StartDate,origin="1970-01-01", tz="PST")),max(as.POSIXct(metadata$StartDate,origin="1970-01-01", tz="PST")), by="5 days"),
+    date_labels = "%b %d", timezone="PST") +
+  theme(axis.text.x=element_text(angle=60, hjust=1)) +
+  facet_grid(rows = vars(Site)) +
+  geom_vline(data = metadata, aes(xintercept = as.POSIXct(StartDate,origin="1970-01-01",tz="PST")),alpha=0.3)
+dev.off()
+```
+
+Now we have a column stating the interval (identified by its first sampling day) for each observation. Let's properly assign site labels.
+```{r}
+# metadata$Timestamp    & sensor_data$StartDate
+# metadata$Folder       & sensor_data$Folder
+# metadata$LabelledSite & sensor_data$LabelledSite
+# metadata$Site         & sensor_data$Site (:=)
+
+metadata[, StartDate := as.Date(StartDate, format="%Y-%m-%d", origin = "1970-01-01",tz="PST"),]
+
+joined_table <- metadata[sensor_data, on=.(StartDate, Site)][!is.na(Site)]
+
+joined_table[Site %in% 1:12, .N, by=.(Site, StartDate, Treatment)][, .SD[which.max(N)], by = .(Site, StartDate)][metadata, on = .(Site, StartDate)][!is.na(Treatment) & PrescribedTreatment != Treatment]
+
+joined_table[Site %in% 1:12, .N, by=.(Site, StartDate, Treatment)][, .SD[which.max(N)], by = .(Site, StartDate)][metadata, on = .(Site, StartDate)][PrescribedTreatment == Treatment]
+
+metadata <- joined_table[Site %in% 1:12, .N, by=.(Site, StartDate, Treatment)][, .SD[which.max(N)], by = .(Site, StartDate)][metadata, on = .(Site, StartDate)]
+metadata[, N := NULL,]
+
+all.equal(metadata$Treatment[1], metadata$Folder[1])
+
+pdf("../plots/treatments.pdf", w=16, h=9)
+ggplot() +
+  geom_point(data=na.omit(metadata), aes(x=as.Date(StartDate),y=Treatment,colour=as.factor(Treatment))) +
+  facet_grid(rows = vars(Site))
+dev.off()
+```
+
+### Get min and max timestamp
+```{r}
+x_min <- min(sensor_data$Timestamp)
+x_max <- max(sensor_data$Timestamp)
+```
+
+## Plot before interpolation
+```{r}
+pdf("../plots/changepoints_final.pdf", w=16, h=9)
+ggplot() +
+  geom_point(data=joined_table, aes(x=Timestamp,y=Treatment,colour=as.factor(Folder),alpha=0.5)) +
+  geom_point(data=metadata, aes(x=as.POSIXct(StartDate),y=PrescribedTreatment,alpha=0.5)) +
+  scale_x_datetime(
+    breaks=seq(min(as.POSIXct(metadata$StartDate,origin="1970-01-01", tz="PST")),
+               max(as.POSIXct(metadata$StartDate,origin="1970-01-01", tz="PST")), by="5 days"),
+    date_labels = "%b %d", timezone="PST") +
+  theme(axis.text.x=element_text(angle=60, hjust=1)) +
+  facet_grid(rows = vars(Site)) +
+  geom_vline(data = metadata, aes(xintercept = as.POSIXct(StartDate)),alpha=0.3)
+dev.off()
+```
+
+### Create new x
+We will use linear interpolation (approxfun) from floor(min_timestamp/300) * 300 to ceiling(max_timestamp/300) * 300, using seq(from, to, by=300). Here we prepare our time-series x-variable.
+```{r}
+x_inter <- seq(floor(as.numeric(x_min)/300)*300,
+    ceiling(as.numeric(x_max)/300)*300,
+    by=300)
+```
+
+### Interpolate
+```{r}
+data_cols <- c(paste("AS", c(0:9), sep="0"), "AS10", "AS11", "Intensity")
+
+interp_table <- joined_table[Site %in% 1:12, lapply(.SD, function(col) approx(x = Timestamp, y = col, xout = x_inter)$y), by=Site, .SDcols = data_cols]
+
+interp_table[, Timestamp := as.POSIXct(x_inter,origin="1970-01-01"), by=Site]
+interp_table[, Treatment := joined_table[interp_table, x.Treatment, on=.(Site, Timestamp), roll = "nearest"]]
+interp_table[, StartDate := joined_table[interp_table, x.StartDate, on=.(Site, Timestamp), roll = "nearest"]]
+interp_table[, LightOn := joined_table[interp_table, x.On, on=.(Site, Timestamp), roll = "nearest"]]
+interp_table[is.nan(Intensity) | is.infinite(Intensity), Intensity := 0]
+
+plotted_interp <- copy(interp_table)
+plotted_interp <- melt(plotted_interp, id.vars = c("Site", "Timestamp","Treatment","StartDate","LightOn"), variable.name = "Channel")
+plotted_interp[, ChannelType := as.character((Channel == "Intensity")) ]
+plotted_interp[ChannelType == "TRUE", ChannelType := "Light intensity"]
+plotted_interp[ChannelType == "FALSE", ChannelType := "Spectral"]
+plotted_interp$ChannelType <- factor(plotted_interp$ChannelType, levels = c("Spectral", "Light intensity"))
+setnames(plotted_interp,"value","Value")
+
+
+ggplot() +
+  geom_point(data=plotted_interp, aes(x=Timestamp,y=Treatment,colour=as.factor(Site),alpha=0.5)) +
+  geom_point(data=metadata, aes(x=as.POSIXct(StartDate,origin = "1970-01-01",tz="PST"),y=Treatment,alpha=0.5)) +
+  scale_x_datetime(
+    breaks=seq(min(as.POSIXct(metadata$StartDate,origin="1970-01-01", tz="PST")),
+               max(as.POSIXct(metadata$StartDate,origin="1970-01-01", tz="PST")), by="5 days"),
+    date_labels = "%b %d", timezone="PST") +
+  theme(axis.text.x=element_text(angle=60, hjust=1)) +
+  facet_grid(rows = vars(Site))
+
+
+group.colours <- c("Intensity" = "#000000", "AS02" = "#0000EE", "AS06" = "#0eea07", "AS07" = "#FFB90F")
+
+# version without night shading (see section below for version with night shading, which appears in manuscript as Figure 2)
+pdf("../plots/interp.pdf", w=16, h=9)
+ggplot(data=plotted_interp[Channel %in% c("Intensity", "AS02", "AS06", "AS07") & Site == 6 & LightOn == 1 & Timestamp %between% c(as.POSIXct("2023-07-05"), as.POSIXct("2023-07-31"))]) +
+  geom_point(aes(x=Timestamp,y=Value, colour = factor(Channel))) +
+  scale_color_manual("Channel", values = group.colours, labels = c("480nm", "555nm", "590nm", "Intensity")) +
+  xlab("Time") +
+  ylab("Lux                                             Counts") +
+  theme(text = element_text(size=rel(4.5))) +
+  theme(legend.text=element_text(size=12)) +
+  facet_grid(ChannelType ~ ., scales = "free_y")
+dev.off()
+
+View(plotted_interp[, Value-shift(Value) > 500, by=.(Channel, Site)])
+
+ggplot(data = plotted_interp[ChannelType == "Spectral" & !(Channel %in% c("AS04", "AS05", "AS10", "AS11")) & !is.na(Value)][, mean(Value), by=c("Channel", "Treatment")],
+       aes(x = Channel, y = V1, fill = Channel)) +
+  geom_col() +
+  facet_grid(rows = vars(Treatment))
+
+norm_spectrogram <- copy(plotted_interp[ChannelType == "Spectral" & !is.na(Value) & Site %in% c(2, 5, 6, 7) & StartDate >= as.Date("2023-07-06", origin = "1970-01-01") & StartDate <= as.Date("2023-07-21", origin = "1970-01-01")])
+
+norm_spectrogram <- norm_spectrogram[!(Channel %in% c("AS04", "AS05", "AS10", "AS11"))][, mean(Value), by=c("Channel", "Treatment")]
+
+setnames(norm_spectrogram, "V1", "Mean")
+
+norm_spectrogram[, Normalised := (Mean - min(Mean)) / (max(Mean) - min(Mean)), by=c("Treatment")]
+
+ggplot(data = norm_spectrogram,
+       aes(x = Channel, y = Normalised, fill = Channel)) +
+  geom_col() +
+  facet_grid(rows = vars(Treatment))
+
+```
+
+```{r}
+ggplot()
+
+
+ggplot(data=joined_table[Site == 6 & On == 1 & Timestamp %between% c(as.POSIXct("2023-07-05"), as.POSIXct("2023-07-31"))]) +
+    geom_point(aes(x=Timestamp,y=Intensity, colour = factor(On))) 
+
+fwrite(metadata, file="../cleaned_data/metadata.csv")
+fwrite(interp_table, file = "../cleaned_data/interpolated_data.csv")
+```
+
+
+### Checking the dates
+```{r}
+delta_ts <- c(58418, 28008, 58390, 28039, 58356, 28075, 58316, 28117, 58273, 28163, 58223, 28215, 58168, 28272, 58109, 28334, 58044, 28401, 57975, 28472, 57900, 28549, 57821, 28630, 57737, 28716, 57649, 28806, 57556, 28900, 57459, 29000, 57357, 29103, 57251, 29211, 57140, 29324, 57026, 29439, 56907, 29560, 56785, 29683, 56659, 29810, 56529, 29942, 56396, 30076, 56259, 30214, 56119, 30356, 55974, 30501, 55828, 30648, 55678, 30800, 55525, 30953, 55369, 31110, 55211, 31269, 55049, 31431, 54886, 31596, 54719, 31763, 54550, 31932, 54379, 32104, 54205, 32279, 54029, 32455, 53851, 32633, 53672, 32813, 53490, 32995, 53306, 33179, 53121, 33365, 52934, 33552, 52745, 33741, 52555, 33932, 52362, 34124, 52169, 34318, 51974, 34512, 51779, 34708, 51581, 34906, 51383, 35104, 51183, 35304, 50982, 35505, 50780, 35706, 50578, 35909, 50374, 36113, 50169, 36318, 49964, 36523, 49757, 36729, 49551, 36936, 49342, 37144, 49134, 37353, 48925, 37561, 48715, 37771, 48505, 37982, 48293, 38193, 48082, 38404, 47870, 38616, 47658, 38828, 47445, 39041, 47231, 39255, 47017, 39469, 46803, 39682, 46590, 39896, 46375, 40111, 46159, 40327, 45944, 40542, 45728, 40757, 45513, 40973, 45297, 41189, 45081, 41405, 44864, 41622, 44648, 41838, 44432, 42055, 44214, 42272, 43998, 42489, 43780, 42706, 43564, 42923, 43347, 43140, 43130, 43357, 42913, 43575, 42696, 43792, 42478, 44009, 42262, 44227, 42045, 44443, 41829, 44660, 41612, 44877, 41395, 45094, 41179, 45310, 40964, 45526, 40748, 45743, 40532, 45958, 40317, 46174, 40102, 46389, 39888, 46604, 39673, 46819, 39459, 47033, 39246, 47247, 39033, 47460, 38821, 47672, 38609, 47885, 38398, 48096, 38187, 48307, 37978, 48517, 37769, 48726, 37560, 48936, 37352, 49144, 37145, 49351, 36939, 49557, 36735, 49761, 36532, 49965, 36329, 50168, 36127, 50371, 35926, 50571, 35727, 50771, 35529, 50968, 35334, 51164, 35139, 51359, 34945, 51553, 34754, 51744, 34563, 51934, 34376, 52122, 34190, 52308, 34005, 52492, 33823, 52674, 33644, 52853, 33466, 53030, 33291, 53205, 33118, 53377, 32948, 53547, 32781, 53714, 32616, 53877, 32455, 54038, 32296, 54197, 32140, 54351, 31988, 54502, 31839, 54651, 31693, 54795, 31551, 54936, 31413, 55073, 31279, 55206, 31148, 55335, 31022, 55460, 30900, 55581, 30781, 55697, 30668, 55810, 30558, 55917, 30454, 56019, 30355, 56117, 30260, 56210, 30169, 56298, 30085, 56381, 30004, 56459, 29930, 56531, 29861, 56598, 29797, 56659, 29738, 56716, 29685, 56766, 29638, 56811, 29596, 56850, 29560, 56884, 29529, 56911, 29506, 56932, 29487, 56949, 29473, 56959, 29466, 56963, 29466, 56961, 29470, 56954, 29480, 56940, 29497, 56921, 29519, 56896, 29547, 56864, 29581, 56828, 29621, 56784, 29667, 56736, 29717, 56682, 29774, 56623, 29836, 56557, 29904, 56487, 29976, 56411, 30055, 56330, 30138, 56243, 30227, 56152, 30320, 56056, 30418, 55955, 30521, 55849, 30629)
+start_time <- as.POSIXct(1687781409, origin = "1970-01-01")
+times <- start_time + cumsum(delta_ts)
+rectangles <- data.table(xstart = times[c(TRUE, FALSE)][1:floor(length(times)/2)], xend = times[c(FALSE, TRUE)][1:floor(length(times)/2)])
+
+plotted_interp_subset <- plotted_interp[Channel %in% c("Intensity", "AS02", "AS06", "AS07") & Site == 6 & LightOn == 1 & Timestamp %between% c(as.POSIXct("2023-07-05"), as.POSIXct("2023-07-31"))]
+
+plotted_interp_subset$ChannelType <- factor(plotted_interp_subset$ChannelType,
+    levels = c('Spectral','Light intensity'),ordered = TRUE)
+
+df2$variable2 <- with(df2, relevel(variable, "vph.shr"))
+
+plotted_interp_subset$ChannelType <- with(plotted_interp_subset, relevel(ChannelType, "Spectral"))
+
+axis_lims = data.frame(Timestamp=as.POSIXct(NA), ChannelType=rep(c("Spectral", "Light intensity"), each=2), 
+               Value=c(0.5*min(plotted_interp_subset[ChannelType=="Spectral" & !is.na(Value)]$Value), 
+                       1.1*max(plotted_interp_subset[ChannelType=="Spectral" & !is.na(Value)]$Value),
+                       -0.25*max(plotted_interp_subset[ChannelType=="Light intensity" & !is.na(Value)]$Value), 
+                       1.1*max(plotted_interp_subset[ChannelType=="Light intensity" & !is.na(Value)]$Value)))
+
+pdf("../plots/figure_2.pdf", w=16, h=9)
+ggplot(data=plotted_interp_subset) +
+  theme(legend.title=element_text(size=rel(2)), legend.text=element_text(size=rel(1.6)), legend.key.spacing.y = unit(0.5, 'cm'),
+    axis.text = element_text(size=rel(1.6)), axis.title = element_text(size=rel(2)),
+    strip.text = element_text(size=rel(1.8))) +
+  theme(panel.background = element_rect(fill='darkgrey', colour='white')) +
+  geom_blank(data=axis_lims, aes(Timestamp, Value)) +
+  geom_rect(data = rectangles[xstart > as.POSIXct("2023-07-06") & xend < as.POSIXct("2023-07-27")], alpha = 0.5, mapping = aes(xmin = xstart, xmax = xend, ymin = -Inf, ymax = Inf)) +
+  geom_point(aes(x=Timestamp,y=Value, colour = factor(Channel))) +
+  scale_color_manual("Channel", values = group.colours, labels = c("480nm", "555nm", "590nm", "Intensity")) +
+  xlab("Time") +
+  ylab("Illuminance                                      Irradiance") +
+  facet_grid(ChannelType ~ ., scales = "free_y")
+dev.off()
+
+pdf("../plots/timescale.pdf", w=16, h=9)
+
+
+
+ggplot() +
+   geom_rect(data = rects, aes(xmin = xstart, xmax = xend, ymin = -Inf, ymax = Inf, fill = "red"), alpha = 0.4)
+dev.off()
+```

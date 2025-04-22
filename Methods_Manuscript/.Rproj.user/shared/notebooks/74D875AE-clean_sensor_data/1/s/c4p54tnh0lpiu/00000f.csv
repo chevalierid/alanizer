@@ -1,0 +1,2 @@
+"0","x_min <- min(sensor_data$Timestamp)"
+"0","x_max <- max(sensor_data$Timestamp)"

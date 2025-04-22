@@ -1,0 +1,8 @@
+"0","source(""site_assign_label_gen.R"")"
+"0","metadata <- melt(setDT(labels), measure = patterns(c(""^dates_out"",""^sites"",""^site_settings"")),"
+"0","     value.name = c(""StartDate"", ""Site"", ""PrescribedTreatment""))"
+"0","metadata <- metadata[,.SD,"
+"0","             .SDcols = c(""StartDate"", ""Site"", ""PrescribedTreatment"")]"
+"0","metadata[, StartDate := as.Date(StartDate, format=""%Y-%m-%d"", origin = ""1970-01-01"",tz=""PST""),]"
+"0","#metadata$StartDate <- with_tz(as.POSIXct(metadata$StartDate), ""PST"")"
+"0","setorder(metadata,StartDate)"

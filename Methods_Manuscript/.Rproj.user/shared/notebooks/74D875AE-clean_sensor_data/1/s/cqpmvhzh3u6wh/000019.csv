@@ -1,0 +1,12 @@
+"0",""
+"0","pdf(""../plots/interp.pdf"", w=16, h=9)"
+"0","ggplot(data=interp_table[Site == 6 & LightOn == 1 & Timestamp %between% c(as.POSIXct(""2023-07-05""), as.POSIXct(""2023-08-01""))]) +"
+"0","  geom_point(aes(x=Timestamp,y=Intensity)) +"
+"0","  #geom_point(aes(x=Timestamp,y=AS03),colour=""blue"") +"
+"0","  #geom_point(aes(x=Timestamp,y=AS05),colour=""green"") +"
+"0","  #geom_point(aes(x=Timestamp,y=AS06),colour=""orange"")+"
+"0","  theme(text = element_text(size=rel(3.5))) +"
+"0","  labs(y = ""Intensity"")"
+"2","Warning:"
+"2"," [38;5;232mRemoved 186 rows containing missing values (`geom_point()`).[39m
+"

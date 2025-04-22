@@ -1,0 +1,7 @@
+"0","source(""site_assign_label_gen.R"")"
+"0","metadata <- melt(setDT(labels), measure = patterns(c(""^dates_out"",""^sites"",""^site_settings"")),"
+"0","     value.name = c(""Timestamp"", ""LabelledSite"", ""PrescribedTreatment""))"
+"0","metadata <- metadata[,.SD,"
+"0","             .SDcols = c(""Timestamp"", ""LabelledSite"", ""PrescribedTreatment"")]"
+"0","metadata$Timestamp <- with_tz(as.POSIXct(metadata$Timestamp), ""PST"")"
+"0","setorder(metadata,Timestamp)"

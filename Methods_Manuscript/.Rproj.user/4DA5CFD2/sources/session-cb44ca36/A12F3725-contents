@@ -1,0 +1,528 @@
+library(ggplot2)
+library(data.table)
+library(car)
+library(lubridate)
+library(emmeans)
+library(DHARMa)
+library(scales)
+library(ggpubr)
+
+biomass <- fread("./raw_data/Pitfall_Trap_Biomass_Data.csv")
+biomass$StartDate <- as.Date(biomass$StartDate, origin = "1970-01-01")
+metatable <- fread("./cleaned_data/metadata.csv")
+metatable <- metatable[!is.na(Site)]
+
+biomass <- dcast(biomass, StartDate+Site~Distance, value.var=c("Biomass"))
+setnames(biomass, c("0m","5m"), c("Near","Far"))
+biomass[metatable, Treatment := i.Treatment, on=.(Site, StartDate)]
+
+# 
+biomass <- biomass[Near >= 0 & Far >= 0]
+
+# sensor_data[sensor_data[which(Treatment %like% "\\*")], Treatment := ifelse(!Treatment %like% "\\*", NA, Treatment),
+#             on=.(Site, StartDate)]
+
+biomass <- biomass[Treatment %in% c("A","C","W")]
+
+biomass$Site <- factor(biomass$Site, levels=1:12, ordered = FALSE)
+biomass$Treatment <- factor(biomass$Treatment, levels=c("C","W","A"), ordered = FALSE)
+
+biomass[, Total := Near + Far]
+
+#biomass[, `:=` (MeanTotal = mean(Total), SDTotal = sd(Total)), by = .(StartDate, Treatment)]
+#biomass[, SDTotal := s]
+
+
+# need to make table longer
+long_biomass <- melt(biomass[,.SD,.SDcols = !c("Total")], id.vars = c("StartDate","Site","Treatment"), variable.name = "Distance")
+long_biomass[Distance == "Near", `:=`(Distance = "0")]
+long_biomass[Distance == "Far", `:=`(Distance = "5")]
+setnames(long_biomass, "value", "Biomass")
+
+first_julian <- julian(min(long_biomass$StartDate))
+long_biomass[, StartDateJulian := as.numeric(julian(StartDate)) - as.numeric(first_julian)]
+
+########### ANOVA ###########
+
+one_way_aov_simple <- aov(Biomass ~ Treatment, data = long_biomass)
+summary(one_way_aov_simple)
+
+TukeyHSD(one_way_aov_simple, "Treatment")
+
+
+lm_simple <- lm(Biomass ~ Treatment, data = long_biomass)
+summary(lm_simple)
+
+########### ANOVA WITH TRAP DISTANCE AS FACTOR ###########
+
+aov_int <- aov(Biomass ~ Treatment * Distance , data = long_biomass)
+summary(aov_int)
+
+lm_int <- lm(Biomass ~ Treatment * Distance, data = long_biomass)
+summary(lm_int)
+
+########## ANOVA WITH JULIAN DATE AS FACTOR ###########
+
+aov_int_julian <- aov(Biomass ~ Treatment * Distance + julian(StartDate), data = long_biomass)
+summary(aov_int_julian)
+
+lm_int_julian <- lm(Biomass ~ Treatment * Distance + julian(StartDate), data = long_biomass)
+summary(lm_int_julian)
+
+########## ANOVA WITH JULIAN DATE AS FACTOR WITH INTERACTION ###########
+
+aov_int_intjulian <- aov(Biomass ~ Treatment * Distance + Treatment * julian(StartDate), data = long_biomass)
+summary(aov_int_intjulian)
+
+lm_int_intjulian <- lm(Biomass ~ Treatment * Distance + Treatment * julian(StartDate), data = long_biomass)
+summary(lm_int_intjulian)
+
+########### ANOVA WITH MONTH AS FACTOR ###########
+
+aov_int_month <- aov(Biomass ~ Treatment * Distance + format(as.Date(long_biomass$StartDate, format = "%Y-%m-%d"), "%B"),
+                 data = long_biomass)
+summary(aov_int_month)
+
+lm_int_month <- lm(Biomass ~ Treatment * Distance + format(as.Date(long_biomass$StartDate, format = "%Y-%m-%d"), "%B"),
+                  data = long_biomass)
+summary(lm_int_month)
+
+#unique(format(as.Date(long_biomass$StartDate, format = "%Y-%m-%d"), "%B"))
+
+###########                            ###########
+########### LINEAR MIXED-EFFECT MODELS ###########
+###########                            ###########
+
+library(lme4)
+library(lmerTest)
+library(glmmTMB)
+
+########### SITE AS RANDOM EFFECT ###########
+
+lme_unt <- lmer(Biomass ~ Treatment + (1|Site), data = long_biomass)
+summary(lme_unt)
+lims <- c(-3.5,3.5)
+
+plot(fitted(lme_unt), resid(lme_unt, type = "pearson"))
+
+qqnorm(resid(lme_unt, scaled = TRUE),
+       xlim = lims, ylim = lims,main = "sqrt(Biomass) ~ Treatment + (1|Site)")
+abline(0,1, col = "red", lty = 2)
+
+
+
+
+
+lme_0 <- lmer(sqrt(Biomass) ~ Treatment + (1|Site), data = long_biomass)
+summary(lme_0)
+lims <- c(-3.5,3.5)
+
+plot(fitted(lme_0), resid(lme_0, type = "pearson"))
+
+qqnorm(resid(lme_0, scaled = TRUE),
+       xlim = lims, ylim = lims,main = "sqrt(Biomass) ~ Treatment + (1|Site)")
+abline(0,1, col = "red", lty = 2)
+
+anova(as_lmerModLmerTest(lme_0))
+
+
+
+gt_0 <- glmmTMB(sqrt(Biomass) ~ Treatment + (1|Site), data = long_biomass)
+summary(gt_0)
+Anova(gt_0)
+
+
+
+########### SITE INTERACTING WITH DISTANCE ###########
+
+lme_1 <- lmer(sqrt(Biomass) ~ Treatment + (1|Site:Distance), data = long_biomass)
+summary(lme_1)
+lims <- c(-3.5,3.5)
+
+plot(fitted(lme_1), resid(lme_1, type = "pearson"))
+
+qqnorm(resid(lme_1, scaled = TRUE),
+       xlim = lims, ylim = lims,main = "sqrt(Biomass) ~ Treatment + (1|Site:Treatment)")
+abline(0,1, col = "red", lty = 2)
+
+anova(as_lmerModLmerTest(lme_1))
+
+
+
+lme_2 <- lmer(sqrt(Biomass) ~ Treatment * Distance + format(as.Date(long_biomass$StartDate, format = "%Y-%m-%d"), "%B") + (1 | Site), 
+              data = long_biomass)
+summary(lme_2)
+
+plot(fitted(lme_2), resid(lme_2, type = "pearson"))
+
+lims <- c(-3.5,3.5)
+qqnorm(resid(lme_2, scaled = TRUE),
+       xlim = lims, ylim = lims,main = "sqrt(Biomass) ~ Treatment * Distance + Month + (1 | Site)")
+abline(0,1, col = "red", lty = 2)
+
+anova(as_lmerModLmerTest(lme_2))
+
+
+
+lme_2_int <- lmer(sqrt(Biomass) ~ Treatment * Distance + format(as.Date(long_biomass$StartDate, format = "%Y-%m-%d"), "%B") + (1 | Site:Distance), 
+                  data = long_biomass)
+summary(lme_2_int)
+
+plot(fitted(lme_2_int), resid(lme_2_int, type = "pearson"))
+
+lims <- c(-3.5,3.5)
+qqnorm(resid(lme_2_int, scaled = TRUE),
+       xlim = lims, ylim = lims,main = "sqrt(Biomass) ~ Treatment * Distance + Month + (1 | Site)")
+abline(0,1, col = "red", lty = 2)
+
+anova(as_lmerModLmerTest(lme_2_int))
+summary(lme_2_int)
+
+lme_3 <- lmer(sqrt(Biomass) ~ Treatment * Distance + StartDateJulian + (1|Site), data = long_biomass)
+summary(lme_3)
+lims <- c(-3.5,3.5)
+
+plot(fitted(lme_3), resid(lme_3, type = "pearson"))
+
+qqnorm(resid(lme_3, scaled = TRUE),
+       xlim = lims, ylim = lims,main = "Treatment * Distance + StartDateJulian + (1|Site)")
+abline(0,1, col = "red", lty = 2)
+
+emmeans(lme_3, list(pairwise ~ Treatment * Distance), adjust = "tukey")
+emmeans(lme_3_int, list(pairwise ~ Treatment), adjust = "tukey")
+
+
+anova(as_lmerModLmerTest(lme_3))
+
+
+
+
+lme_3_int <- lmer(sqrt(Biomass) ~ Treatment * Distance + StartDateJulian + (1|Site:Distance), data = long_biomass)
+summary(lme_3_int)
+lims <- c(-3.5,3.5)
+
+plot(fitted(lme_3_int), resid(lme_3_int, type = "pearson"))
+
+qqnorm(resid(lme_3_int, scaled = TRUE),
+       xlim = lims, ylim = lims,main = "Treatment * Distance + StartDateJulian + (1|Site:Distance)")
+abline(0,1, col = "red", lty = 2)
+
+emmeans(lme_3_int, list(pairwise ~ Treatment * Distance), adjust = "tukey")
+emmeans(lme_3_int, list(pairwise ~ Treatment), adjust = "tukey")
+
+anova(as_lmerModLmerTest(lme_3_int))
+
+
+
+simulateResiduals(lme_2_int, plot = TRUE)
+simulateResiduals(lme_3_int, plot = TRUE)
+
+
+
+
+
+
+library(emmeans)
+(EMM.Treatment <- emmeans(lme_1, "Treatment"))
+with(long_biomass, tapply(Biomass, Treatment, mean))
+
+
+
+
+
+########### AIC ###########
+
+library(AICcmodavg)
+
+
+
+########### LINE GRAPH ############
+
+# is biomass filtered by active sites (metatable)?
+# yes
+
+# create line graphs:
+  # by Treatment (diff graphs)
+    # + facet_grid(rows = vars(Treatment)) +
+  # by StartDate (same graph)
+    # aes(x = StartDate)
+  # by Site (same graph)
+    # colour = Site
+
+pdf("./plots/biomass_all_points.pdf", w=16, h=9)
+ggplot(biomass, aes(x = StartDate, y = Total, colour = as.factor(Site))) +
+  geom_point() +
+  geom_line() +
+  labs(y= "Total Biomass") +
+  facet_grid(rows = vars(Treatment))
+dev.off()
+
+pdf("./plots/biomass_points_stat.pdf", w=16, h=9)
+ggplot(biomass[, Total, by=.(Site, StartDate, Treatment)], aes(x = StartDate, y = Total)) +
+  stat_summary(fun = mean, geom = "point") +
+  stat_summary(fun.data = mean_se, geom = "errorbar") + 
+  labs(y="Mean Total Biomass") +
+  facet_grid(rows = vars(Treatment))
+dev.off()
+  
+# pdf("./plots/biomass_points.pdf", w=16, h=9)
+# ggplot(biomass, aes(x = StartDate, y = MeanTotal)) +
+#   geom_point() +
+#   geom_errorbar(aes(ymin = MeanTotal - SDTotal, ymax = MeanTotal + SDTotal)) +
+#   labs(y="Mean Total Biomass") +
+#   facet_grid(rows = vars(Treatment))
+# dev.off()
+
+
+# plot again without splitting by site, plotting both mean and standard error
+
+ 
+
+########### HISTOGRAM ############
+
+
+
+
+# filtered_biomass <- metatable[biomass, on = .(StartDate, Site), nomatch = 0]
+# filtered_biomass[metatable, Treatment := i.Treatment, on=.(Site, StartDate)]
+# filtered_biomass[, Total := Near + Far]
+
+## divide the number of observations by the number of sites for each StartDate
+
+# filtered_biomass[, sum(Total), by = .(StartDate, Treatment)]
+
+bcount_bar <- as.data.table(long_biomass[, .N, by=.(Site, StartDate)][, .N, by=StartDate][order(StartDate)])
+setnames(bcount_bar, "N", "NumberOfSites")
+bcount_bar[, NumberOfSites := as.integer(NumberOfSites)]
+# bcount_bar[, TotalBiomass := filtered_biomass[, sum(Total), by=StartDate]$V1]
+# bcount_bar[, Normalised := TotalBiomass/NumberOfSites]
+ggplot(bcount_bar, aes(x=StartDate, y=NumberOfSites)) +
+  geom_col() +
+  scale_y_continuous(breaks = )
+
+
+all_col <- obs_col_plot(filtered_biomass)
+all_col + labs(y = "Total count divided by number of sites")
+
+c_col <- obs_col_plot(filtered_biomass[Treatment == "C"])
+c_col + labs(y = "Total count under control (darkness) divided by number of sites")
+
+a_col <- obs_col_plot(filtered_biomass[Treatment == "A"])
+a_col + labs(y = "Total count under amber light divided by number of sites")
+
+w_col <- obs_col_plot(filtered_biomass[Treatment == "W"])
+w_col + labs(y = "Total count under white light divided by number of sites")
+
+col_list <- c(all_col, c_col, a_col, w_col)
+
+do.call("grid.arrange", c(col_list, ncol=1))
+
+
+
+filtered_biomass[, .N, by=.(StartDate, Site, Treatment)][, .N, by=.(Treatment)]
+filtered_biomass[Treatment == "", .N, by=.(StartDate, Site)][order(StartDate)][order(StartDate, Site)]
+
+
+########### INDEX ############
+
+biomass[, Index := Near/(Near+Far), by = .(StartDate,Site)]
+
+ggplot(biomass, aes(Treatment, Index)) +
+  geom_boxplot(outlier.shape = NA) +
+  labs(y = "Biomass statistic") +
+  geom_jitter() +
+  geom_hline(aes(yintercept = 0.5),colour="red",linetype="dotted")
+
+ggboxplot(biomass, x = "Treatment", y = "Index") +
+  geom_boxplot(outlier.shape = NA) +
+  labs(y = "Biomass statistic") +
+  geom_jitter() +
+  geom_hline(aes(yintercept = 0.5),colour="red",linetype="dotted") +
+  stat_compare_means(method = "anova", label.y = 1.25) +
+  stat_compare_means(label = "p.signif", method = "t.test",
+                     ref.group = "C")
+
+ggboxplot(biomass, x = "Treatment", y = "Near") +
+  geom_boxplot(outlier.shape = NA) +
+  labs(y = "Biomass statistic") +
+  geom_jitter() +
+  geom_hline(aes(yintercept = 0.5),colour="red",linetype="dotted") +
+  stat_compare_means(method = "anova", label.y = 14) +
+  stat_compare_means(label = "p.signif", method = "t.test",
+                     ref.group = ".all.")
+
+my_comparisons <- list(c("C","W"), c("C","A"), c("W","A"))
+ggboxplot(biomass, x = "Treatment", y = "Near") +
+  geom_boxplot(outlier.shape = NA) +
+  labs(y = "Biomass statistic") +
+  geom_jitter() +
+  geom_hline(aes(yintercept = 0.5),colour="red",linetype="dotted") +
+  stat_compare_means(method = "wilcox.test", comparisons = my_comparisons) +
+  stat_compare_means(label.y = 16)
+
+ggboxplot(biomass, x = "Treatment", y = "Total") +
+  geom_boxplot(outlier.shape = NA) +
+  labs(y = "Biomass statistic") +
+  geom_jitter() +
+  geom_hline(aes(yintercept = 0.5),colour="red",linetype="dotted") +
+  stat_compare_means(method = "wilcox.test", comparisons = my_comparisons) +
+  stat_compare_means(label.y = 16)
+
+
+wilcoxon_biomass <- data.frame(W = wilcox.test(biomass[Treatment == ("W"),Index], biomass[Treatment == ("C"),Index], 
+            alternative = "two.sided", exact = FALSE)$p.value,
+            A = wilcox.test(biomass[Treatment == ("A"),Index], biomass[Treatment == ("C"),Index], 
+            alternative = "two.sided", exact = FALSE)$p.value)
+
+wilcoxon_biomass
+
+############ 1m rather than index ############
+
+ggplot(biomass, aes(Treatment, Near)) +
+  geom_boxplot(outlier.shape = NA) +
+  labs(y = "Pitfall traps 0m away from light") +
+  geom_jitter() +
+  geom_hline(aes(yintercept = 0.5),colour="red",linetype="dotted")
+
+
+wilcoxon_biomass_one <- data.frame(W = wilcox.test(biomass[Treatment == ("W"),Near], biomass[Treatment == ("C"),Near], 
+                                               alternative = "two.sided", exact = FALSE)$p.value,
+                                   A = wilcox.test(biomass[Treatment == ("A"),Near], biomass[Treatment == ("C"),Near], 
+                                               alternative = "two.sided", exact = FALSE)$p.value)
+
+wilcoxon_biomass_one
+
+############ 5m ############
+
+ggplot(biomass, aes(Treatment, Far)) +
+  geom_boxplot(outlier.shape = NA) +
+  labs(y = "Biomass statistic") +
+  geom_jitter() +
+  geom_hline(aes(yintercept = 0.5),colour="red",linetype="dotted")
+
+
+wilcoxon_biomass_one <- data.frame(W = wilcox.test(biomass[Treatment == ("W"),Far], biomass[Treatment == ("C"),Far], 
+                                                   alternative = "two.sided", exact = FALSE)$p.value,
+                                   A = wilcox.test(biomass[Treatment == ("A"),Far], biomass[Treatment == ("C"),Far], 
+                                                   alternative = "two.sided", exact = FALSE)$p.value)
+
+wilcoxon_biomass_one
+
+
+
+
+
+# pdf("../plots/biomass.pdf", w=16, h=9)
+# ggplot(data=interp_table[Site == 6 & LightOn == 1 & Timestamp %between% c(as.POSIXct("2023-07-01"), as.POSIXct("2023-08-01"))]) +
+#   geom_point(aes(x=Timestamp,y=Intensity,colour=as.factor(Treatment))) +
+#   geom_point(aes(x=Timestamp,y=AS03),colour="blue") +
+#   geom_point(aes(x=Timestamp,y=AS06),colour="orange")
+# dev.off()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# source("reshape.R")
+# 
+# master <- format_master("Collection_Date_Site_Treatment_Notes.csv")
+# 
+# master
+# biomass
+# head(master)
+# # want to select rows of biomass where master status is blank
+# 
+# master[master$Status=="",]$Date
+# 
+# dim(biomass[biomass$Treatment=="A",])
+# dim(biomass[biomass$Treatment=="C",])
+# dim(biomass[biomass$Treatment=="W",])
+# 
+# status_good <- biomass[biomass$Date %in% master[master$Status=="",]$Date,]
+# status_good <- status_good[status_good$Treatment!= "",]
+# 
+# dim(status_good[status_good$Treatment=="A",])
+# dim(status_good[status_good$Treatment=="C",])
+# dim(status_good[status_good$Treatment=="W",])
+# 
+# status_good[status_good$Distance=="0m",]
+# # Date, Site, Treatment, Distance:
+#   # let's try to make 3 datasets:
+#   # 1 for each treatment
+#   # each dataset has all sites averaged per date
+# 
+# 
+# summary_biomass <- status_good[status_good$Distance=="0m" & status_good$Date <= as.POSIXct("2023-08-30 PDT"),] %>%
+#   group_by(Date,Treatment) %>%
+#   summarise(across(c(Biomass),list(mean=mean)))
+# 
+# summary_biomass
+# 
+# bmplot <- ggplot(data=summary_biomass, aes(x=Date, y=Biomass_mean, color=Treatment)) +
+#   geom_point() +
+#   scale_color_manual(values=c("C" = "black",
+#                               "W" = "blue",
+#                               "A" = "orange"))
+# bmplot
+#   
+#   
+#   pberry <- ggplot(data=dfb2, aes(x=reorder(berry_species,-mean_pupae$x), y=dfb2$mean_pupae$x)) + 
+#   geom_boxplot() + xlab("Berry species") + ylab("Pupae per sample") + 
+#   ggtitle("2022 SWD pupae per sample by berry species") +
+#   theme_bw() +
+#   theme(axis.line = element_line(colour = "black"),
+#         panel.grid.major = element_blank(),
+#         panel.grid.minor = element_blank(),
+#         panel.border = element_blank(),
+#         panel.background = element_blank()) 
+# 
+# pberry
+# 
+# 
+# lets <- c("A","A","B","B", "C","C","D","D")
+# nums <- c("1","3","5","6","7","8","9","10")
+# d <- data.frame(lets=lets,nums=nums)
+# d[3,1]
+# d[d$lets=="A",]
+# subs <- c("A","C")
+# d[d$lets %in% subs,]
+# 
+# 
+# 
+# set.seed(1)
+# 
+# sample_df <- data.frame(
+#   group=factor(rep(letters[1:3],each=10)),
+#   value=rnorm(30),
+#   day=rep(1:10,times=3)
+# )
+# 
+# sample_df
+# 
+# aggregate(x = sample_df$value, by = list(sample_df$group,sample_df$day), FUN = "mean")
+# 
+# group_means_df <- setNames(
+#   aggregate(value, by(day,group), sample_df, mean),
+#   c("day","group_mean")
+# )
+# group_means_df
+# 
+# ggplot(data = sample_df, mapping = aes(x = group, y = value)) +
+#   geom_point() +
+#   geom_point(
+#     mapping = aes(y=group_mean), data = group_means_df,
+#     colour = 'red', size = 3
+#   )

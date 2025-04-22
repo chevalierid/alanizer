@@ -1,0 +1,11 @@
+install.packages("indicspecies",dependencies = TRUE)
+library(indicspecies)
+data(wetland)
+str(wetland)
+wetland[] <- lapply(wetland, as.numeric)
+wetland <- wetland*6000
+View(wetland)
+groups <- c(rep(1, 17), rep(2, 14), rep(3,10))
+indval <- multipatt(wetland, groups, 
+                    control = how(nperm=999)) 
+summary(indval)

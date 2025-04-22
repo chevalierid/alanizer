@@ -1,0 +1,7 @@
+"0","# match based on LabelledSite, Folder, and Timestamp"
+"0","manual_changepoints <- fread(""../raw_data/Collection Date Site Treatment and Notes(Manual).csv"")"
+"0","manual_changepoints[, `:=` (Timestamp = gsub(""\xa0"","" "",Timestamp), LastPoint = gsub(""\xa0"","" "",LastPoint))]"
+"0","manual_changepoints[, `:=` (Timestamp = as.POSIXct(Timestamp, origin = ""1970-01-01"", tz=""PST""),"
+"0","                      LastPoint = as.POSIXct(LastPoint, origin = ""1970-01-01"", tz=""PST""))]"
+"0","manual_changepoints[, Treatment := gsub(""$"",""*"",Treatment)]"
+"0","manual_changepoints"

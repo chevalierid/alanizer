@@ -1,0 +1,8 @@
+"0","data_cols <- c(paste(""AS"", c(1:9), sep=""0""), ""AS10"", ""AS11"", ""Intensity"")"
+"0",""
+"0","interp_table <- joined_table[Site %in% 1:12, lapply(.SD, function(col) approx(x = Timestamp, y = col, xout = x_inter)$y), by=Site, .SDcols = data_cols]"
+"0","interp_table[, Timestamp := as.POSIXct(x_inter,origin=""1970-01-01""), by=Site]"
+"0","interp_table[, Treatment := joined_table[interp_table, x.Treatment, on=.(Site, Timestamp), roll = ""nearest""]]"
+"0","interp_table[, StartDate := joined_table[interp_table, x.StartDate, on=.(Site, Timestamp), roll = ""nearest""]]"
+"0","interp_table[, LightOn := joined_table[interp_table, x.On, on=.(Site, Timestamp), roll = ""nearest""]]"
+"0","interp_table"

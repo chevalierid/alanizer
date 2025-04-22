@@ -1,0 +1,4 @@
+"0","fwrite(raw_output,""../raw_data/raw_sensor_data_collated.csv"")"
+"0",""
+"0","setnames(metadata, ""Timestamp"", ""StartDate"")"
+"0","fwrite(metadata, ""../raw_data/raw_sensor_metadata_collated.csv"")"

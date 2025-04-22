@@ -1,0 +1,16 @@
+"0","raw_output <- lapply(sites,get_files)"
+"2","Warning in read.table(file = file, header = header, sep = sep, quote = quote,  :"
+"2","
+ "
+"2"," line 5 appears to contain embedded nulls
+"
+"2","Warning in read.table(file = file, header = header, sep = sep, quote = quote,  :"
+"2","
+ "
+"2"," incomplete final line found by readTableHeader on '../raw_data/sensordata/site12/10-20-0.CSV'
+"
+"2","Warning in scan(file = file, what = what, sep = sep, quote = quote, dec = dec,  :"
+"2","
+ "
+"2"," embedded nul(s) found in input
+"

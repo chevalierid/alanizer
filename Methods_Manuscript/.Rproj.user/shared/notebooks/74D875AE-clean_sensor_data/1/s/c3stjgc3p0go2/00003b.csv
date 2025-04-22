@@ -1,0 +1,2 @@
+"0",""
+"0","joined_table[Site %in% 1:12, .N, by=.(Site, StartDate, Treatment)][, .SD[which.max(N)], by = .(Site, StartDate)][metadata, on = .(Site, StartDate)][PrescribedTreatment == Treatment]"

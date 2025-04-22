@@ -1,0 +1,193 @@
+lets <- c("A","A","B","B", "C","C","D","D")
+nums <- c("1","3","5","6","7","8","9","10")
+d <- data.frame(lets=lets,nums=nums)
+d[3,1]
+
+
+### Diagnostics
+## Structure
+str(d)
+summary(d)
+
+### Indexing/finding elements in arrays
+
+## Last element in object
+tail(d, n=1)
+
+## Which rows have lets value A?
+d[d$lets=="A",]
+
+## Find longest string in list of strings
+which.max(nchar(list_of_strings))
+
+## Slash to end of string (double all backslashes, this is copy-pasted straight from regex101)
+"\/+(?!\S*\/).+?(?=$)"
+
+
+## Find rows that match elements in another entity 
+subs <- c("A","C")
+d[d$lets %in% subs,]
+
+
+
+### Reorganising data structurally
+
+## List of lists (e.g., lapply results) to dataframe
+l <- replicate(6, as.list(sample(letters[1:5], 3)), simplify = FALSE)
+1:length(unlist(l[1]))
+# apparently you can use 
+  lframe <- do.call(rbind.data.frame,l)
+                #    ,setNames(1:length(unlist(l[1]))))
+# column names are really goofed
+# think about whether you need to transpose
+
+# this works
+  lframe2 <- data.frame(sapply(l,c))
+  
+# you can also use 
+  # lframe - data.frame(matrix(unlist(l), nrow=length(l), byrow=TRUE))
+# but this flattens all data into common type
+
+  lst_obj <- list(row1 = 1 : 5,
+                  row2 = LETTERS[1 : 5],
+                  row3 = FALSE)
+  
+  print ("Original List")
+  print (lst_obj)
+  
+# binding columns together
+df <- do.call(rbind, lst_obj)
+print ("Original dataframe")
+
+# converting to a dataframe
+data_frame <- as.data.frame(df)
+print (data_frame)
+  
+  
+  
+  
+### Date formatting
+  
+# is as.POSIXct(date,format="") not actually reformatting?
+# consider:
+date <- as.POSIXct("2023-07-03 03:00:00 CEST")
+format(date, "%m.%d.%H")
+  
+  
+  
+### String ops
+
+## Concatenation
+paste("hello","world",sep=" ")
+
+  
+## Remove character from string
+gsub('x', '', "abcxyz")
+
+
+
+### Data.Table
+
+## Rename a column
+setnames(DT, "oldname", "newname")
+
+## Number of rows in a group
+DT = data.table(iris)
+DT[, Bin := cut(Sepal.Length, c(4,6,8))]
+DT[Species == "setosa", .N]
+
+## Number of rows in all groups
+DT[, .N, by=.(Species, Bin)]
+
+## Sort by a column
+DT[order(columnName)]
+
+## Access row from row in other table
+labels_table[status_table, on = c("Timestamp","LabelledSite"), 
+             c("Status", "Folder", "Site") := list(fcase(
+  i.Status %in% c("", "dep") | is.na(i.Folder) | is.na(i.Site), 1,
+  default = 0
+), i.Folder, i.Site)]
+
+
+## Joins (better & more complete example than above)
+
+DT_1 <- data.table(a = 1:4,        # Create first data.table
+                   b = c(TRUE, FALSE, FALSE, TRUE),
+                   c = month.abb[1:4],
+                   d = 4:7)
+
+DT_2 <- data.table(a = 3:10,        # Create second data.table
+                   g = c(TRUE, TRUE, FALSE, TRUE, TRUE, TRUE, FALSE, TRUE),
+                   h = month.abb[5:12])
+
+DT_1
+DT_2
+
+# Right outer join
+DT_12 <- DT_1[DT_2, on = c("a")]    # Join DT_2 to DT_1
+DT_12
+
+# Left outer join
+DT_13 <- DT_2[DT_1, on = c("a")]
+DT_13
+
+# Inner join
+DT_14 <- DT_1[DT_2, on = c("a"), nomatch = 0]
+DT_14
+
+# Full outer join
+DT_15 <- merge(DT_1, DT_2, all = TRUE)
+DT_15
+
+
+## Drop columns that fit a certain pattern
+# this drops columns that follow a certain pattern: X.1, X.2, X.3, ..., X.9
+cols <- paste("X", c(1:9), sep=".")
+hydrogels <- hydrogels[, !cols, with=FALSE]
+
+# Select subset of columns contained within vector
+pitfall_names[, ..taxa_cols]
+
+# Exclude columns
+dt[,.SD, .SDcols = !c('b', 'c')]
+
+## Fill columns downward so that NAs are replaced with most recent value
+DT <- data.table(x = c("hi", NA, NA, "ho", NA, "bye"))
+DT[, x[nafill(replace(.I, is.na(X), NA), "locf")]]
+# or, for integers
+sensor_data[, StartDate := nafill(StartDate, type="locf")]
+
+## Apply function to column of table
+
+# Set each value of StartDate to the closest entry in unique(labels_table$Timestamp)
+maxless <- function(input, labels) {
+  return(as.POSIXct(max(as.numeric(labels)[as.numeric(labels) <= as.numeric(input)]),origin="1970-01-01"))
+}
+# Apply function maxless to the column Changepoint to create new column StartDate
+big_table[, StartDate := maxless(Changepoint, unique(labels_table$Timestamp)), by=1:nrow(big_table)]
+
+## Apply function to multiple columns of table
+get_min_diff <- function(data) {
+  return(min(abs(diff(as.numeric(data,origin="1970-01-01")))))
+}
+big_table[, lapply(.SD, get_min_diff), by=Site, .SDcols = "Timestamp"]
+
+## Assign multiple columns
+biomass[, `:=` (MeanTotal = mean(Total), SDTotal = sd(Total)), by = .(StartDate, Treatment)]
+
+## Join on multiple columns
+metadata <- metadata[status_table, `:=` (Folder = i.Folder , LabelledSite = i.Label), on = .(StartDate,Site)]
+
+## String replace within table
+big_table[, Site := gsub("x","y",Site)]
+
+## Replace NAs in a column with existing interspersed values, going downward
+big_table[, StartDate := nafill(StartDate, type="locf")]
+
+
+## Find modal value (most frequent) by group
+dt = data.table(id=rep(1:2,7), category=c("x","y",NA))
+print(dt)
+
+dt[!is.na(category), .N, by = .(id, category)][, .SD[which.max(N)], by = id]

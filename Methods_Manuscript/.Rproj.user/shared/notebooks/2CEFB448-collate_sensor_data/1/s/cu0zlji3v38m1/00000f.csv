@@ -1,0 +1,5 @@
+"0","start_date <- as.POSIXct(""23.06.21.00"",format=""%y.%m.%d.%H"")"
+"0","end_date <- as.POSIXct(""23.12.04.23"",format=""%y.%m.%d.%H"")"
+"0","all_dates <- seq.POSIXt(start_date, end_date, ""hour"")"
+"0",""
+"0","all_dates <- format(all_dates,""%m-%d-%H"")"

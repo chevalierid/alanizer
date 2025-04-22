@@ -1,0 +1,11 @@
+"0","ggplot(data=interp_table[Site == 6 & LightOn == 1 & Timestamp %between% c(as.POSIXct(""2023-07-05""), as.POSIXct(""2023-08-01""))]) +
+  geom_point(aes(x=Timestamp,y=Intensity)) +
+  #geom_point(aes(x=Timestamp,y=AS03),colour=""blue"") +
+  #geom_point(aes(x=Timestamp,y=AS05),colour=""green"") +
+  #geom_point(aes(x=Timestamp,y=AS06),colour=""orange"")+
+  theme(text = element_text(size=rel(3.5))) +
+  labs(y = ""Intensity"")
+"
+"2","Warning:"
+"2"," [38;5;232mRemoved 186 rows containing missing values (`geom_point()`).[39m
+"

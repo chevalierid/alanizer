@@ -1,0 +1,4 @@
+"0","sites <- list.files(path=""../raw_data/sensordata"", full.names = TRUE)"
+"0","header <- c(""Timestamp"", ""LabelledSite"", ""Amber"", ""White"", ""On"", ""Override"", ""Intensity"","
+"0","               ""AS00"", ""AS01"", ""AS02"", ""AS03"", ""AS04"", ""AS05"", ""AS06"", ""AS07"", ""AS08"","
+"0","               ""AS09"", ""AS10"", ""AS11"")"

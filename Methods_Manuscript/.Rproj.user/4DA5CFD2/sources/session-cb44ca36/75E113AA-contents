@@ -1,0 +1,284 @@
+---
+title: "Noam Ross - Nonlinear Models in R: The Wonderful World of mgcv"
+output: html_document
+date: "2024-05-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+Linear models: interpretable, represent linear relationship between 2 variables.
+
+However, may not represent model.
+
+Other end of spectrum: black-box ML. Complex interactions and nonlinearities.
+
+However, hard to understand relationship between individual variables and output.
+
+GAMs are a happy medium:
+* predict from complex, nonlinear, maybe interacting relationships
+* understand these relationships and make inferences
+* control for these relationships
+
+They're also quite good at prediction!
+
+Generalised: can handle many distributions (normal, binomial, count...)
+Additive: multiple terms add together in model to get the prediction, BUT (unlike GLM) the individual terms are not linear
+
+Model: model (underlying representation of the system)
+
+
+What about using a polynomial?
+* Have to choose the appropriate degree of polynomial to capture relationship
+* Even polynomial-type curves are limited in terms of what curves they can represent
+* Poor residuals and extrapolation
+
+A "spline" is the building block of a generalised additive model.
+
+They are the sums of lots of repeating basis functions that we have in the data. Each gets a coefficient and is summed up.
+
+Basis functions can have 1, 2, or more dimensions. 
+
+Fundamental problem in fitting GAM: optimising "wiggliness" (fitting data but not noise)
+
+```{=latex}
+log(L) - \lambda W
+```
+
+where log(L) is degree of fit (likelihood of the model), \(\lambda\) is the smoothing parameter, and W is wiggliness (how much a function oscillates).
+
+Fitting a model = choosing the right \(\lambda\) to fit data and avoid fitting noise.
+
+mgcv does this automatically.
+
+
+
+###Fitting a linear model
+
+```{r}
+lm(y + x1 + x2, data = data)
+```
+
+Call function lm and define formula of your model (outcome y is a function of x1 and x2, which are in your dataframe).
+
+
+###Fitting a generalised linear model
+
+```{r}
+glm(y + x1 + x2, data = data, family = binomial)
+```
+
+Only difference from lm is that you also pass in a distribution family to describe what type of data you're working with (binomial, count with Poisson dist, etc.).
+
+
+###Fitting a generalised additive model with mgcv:
+
+mgcv is similar:
+
+```{r}
+library(mgcv)
+gam(y ~ x1 + s(x2),   # model formula
+    data = data,      # your data
+    family = gaussian,# or something else
+    method = "REML")   # how to pick lambda
+    
+```
+
+Model formula is similar to LM or GLM. You can have a linear component, like x1, or you can wrap in a function like s (smoother) that creates a nonlinear relationship between x2 and y.
+
+Method tells mgcv what method to use to choose \(\lambda\), your smoothing parameter. REML, relative maximum likelihood, is almost always the right way to go (NOT the default GVP method).
+
+
+You can add more components:
+
+```{r}
+y ~ x1 +      # linear terms
+  s(          # smooth terms:
+    x2,       # variable
+    bs = "tp",# kind of basis functions
+    k = 10,   # how many basis functions
+    ...)
+```
+
+Above, the type of basis function "tp" stands for "thin-plate spline" which is often a good choice.
+
+k just has to be large enough to represent sufficient complexity...if it's too high, the smoothing function will smooth it down sufficiently, so that's fine as long as you have sufficient computing power to run it. If it's too low you won't be able to capture sufficient complexity.
+
+## From linear to additive
+
+How can you get a complex multidimensional interaction between 2+ variables?
+
+```{r}
+y ~ s(x1) + s(x2)                # Two additive smooths
+y ~ s(x1, x2)                    # 2D smooth/interaction
+y ~ te(x1, x2)                   # 2D smooth, two wigglinesses
+y ~ te(x1) + te(x2) + ti(x1, x2) # 2D smooth, two wigglinesses, interaction as a separate term
+```
+
+Incorporating multiple variables into a single smoothing function results in a multidimensional function.
+
+However, this assumes all variables are equally wiggly (surface equally wiggly in all dimensions).
+
+You can also use te, a tensor spline, which includes separate lambdas for all variables.
+
+You can pull apart this relationship: what are the parts that are just x1, just x2, just interaction?
+
+2D functions are very good for depicting things in space.
+
+```{r}
+gam(d-s(x,y) + s(depth), data = dolphin_observations)
+```
+
+This is to model dolphin density in space as a 2D surface.
+
+## Other basis functions
+
+Soap films: allows you to model spatial data within a polygon and not cross boundaries (consider them when calculating distance between points rather than e.g. jumping across gaps)
+
+Spline-on-a-sphere: can simply pass lat/long and use the basis function "sos" to look at spatial variation across a sphere's surface
+
+Gaussian processes: a good way of representing data where observations are not independent, such as time series data. If you were to autofit a spline or a linear model to these data directly, you would probably get autocorrelation amongst residuals and bad error estimates, because you wouldn't account for the interdependence of your datapoints.
+
+Cyclic smooths: what's the cyclic component, what's the long-term trend? This is a good fit for GAMs because these are two nonlinear components you can literally add together. E.g. modeling bat disease: is there a seasonal component and how does it compare to longer-term change? Can add together Gaussian process spline AND a cubic cycle spline (where beginning and end are always the same).
+
+
+## Non-smooth smooths
+
+Smooth = assembling a relationship out of small parts, then penalising complexity to deal with noise
+
+Broadly you can represent any type of relationship like this. Splines don't have to be continuous: they can also be discrete.
+
+Discrete random effects = simplest version of these
+* Age classes, liking different colours, etc.
+* Small components we penalise so that they don't deviate too much from overall
+* With GAM, you use an "re" smoother to represent this and pass x as a factor to represent discrete levels
+
+```{r}
+gam(y ~ s(x, bs = "re"), data = dat)
+```
+
+Factor-smooth interactions:
+* interactions between discrete level/random effect and a continuous smooth
+* for example, patient progression over time
+* how does patient response change over time? also there are differences between individual patients
+* can use "fs", factor smooth: tensor smooth where one basis is a continuous function and one basis is a random effect
+* can pull out overall effect then look how different groups/individuals deviate from that
+
+```{r}
+gam(y ~ te(xc, bs="gp") +
+  ti(xc, xf, bs = c("gp", "re"), data = dat))
+```
+
+
+One smooth represents central effect (continuous variable in time), using Gaussian process (dealing with autocorrelation).
+
+Another smooth represents the interaction of that process--the factor of which group of bats we're looking at--combining a Gaussian process AND a random effect. You're able to separate components out, and in the graph you have the overall pattern AND individual deviances.
+
+Markov random fields:
+* Good for modeling with spatial area data (areas in space that are adjacent to one another but defined as discrete units)
+* Each component has its own effect, but we can penalise each component to make it more like the things next to it
+* We can do this with a smooth whose basis is the Markov random field (mrf), passing a list which is a list of neighbourhoods (e.g. polygons, or vectors showing neighbours of each individual component)
+* Works for anything you can represent as network or graph
+* Works for phylogenetics also
+
+```{r}
+gam(y ~ s(xc, bs="mrf",
+          xt = list(
+            nb = nb
+          )),
+    data = dat)
+```
+
+Adaptive smooths:
+* Sometimes, the relationship between two smoothing functions is different along different parts of your range
+* More data-hungry due to piecewise fitting
+
+## Probability distributions
+
+We have a wide set of smooths capturing different types of relationships.
+
+However, there's also a big range of data and outcomes you might be modeling.
+
+Lots of these are built directly into the mgcv package.
+
+Data with a lot of outliers in it (fat tails)
+* Student's T-distribution can adjust fatness of tails from being normal distribution to being much broader
+* This can reduce effects of outliers on relationship captured
+
+```{r}
+gam(y ~ s(x), data = fat_tailed_data, family = scat)
+```
+
+Count data:
+
+```{r}
+gam(y ~ x, data = dat, family = poisson) # evenly-distributed throughout individuals
+gam(y ~ x, data = dat, family = negbin)  # negative binomial: overdispersed data
+gam(y ~ x, data = dat, family = tw)      # Tweedy distribution: good for counting things clustered in groups, such as pods of dolphins in space
+```
+
+Ordered categorical data:
+
+Numerical and ordered, but not necessarily continuous in that range or evenly spaced (e.g. ratings)
+
+```{r}
+gam(ordered_factor ~ s(x), data = data, family = ocat)
+```
+
+Fit a spline or smooth, and GAM fits thresholds along there to determine when something transitions from one group to another. Are people really normal when going from 1-4 but hesitant to rate something as a 5?
+
+
+Multiple output variables:
+
+Maybe you're trying to predict tags for a document or determine relationship between height and weight.
+
+Ordered categories: Multinomial
+```{r}
+gam(list(category ~ s(x1) + s(x2), 
+                  ~ s(x1) + s(x2)),
+              data = model_dat, family = multinom(K=2))
+```
+x1 and x2 both help us determine our category, and we indicate that there are 2 different categories by passing K=2.
+
+
+Multiple continuous outputs: Multivariate normal
+```{r}
+gam(list(category ~ s(x1) + s(x2), 
+                  ~ s(x1) + s(x3)),
+              data = model_dat, family = svn(K=2))
+```
+2 different variables that are potential outputs. First predicted by x1 and x2, second by x1 and x3. They share some information but not all.
+
+
+## But I need variable selection!
+
+You have a model...you're not just interested in prediction, you want to figure out the most important variables so that you can discard the rest.
+
+The argument "select = TRUE" will help with variable selection.
+
+It adds a penalty as to overall slope of model, which is the same as doing something like ridge regression or a lasso, which penalises too much influence influence of relationship unless there's data to support it.
+
+```{r}
+gam(y ~ s(x1) + s(x2) + s(x3) + s(x4) + s(x5) + s(x6),
+    data = dat, family = gaussian, select = TRUE)
+```
+
+Here, 3 of 6 vars are spurious. Because we've passed select = TRUE, it'll give any spurious vars zero coeffs.
+
+Complex nested hierarchical effects:
+
+gamm OR gamm4::gamm4 gives you mgcv combined with lme4, allowing for complex random effects.
+
+```{r}
+gamm4(y ~ s(v, w, by=z) + 
+          s(r, k=20, bs="cr"),
+      random = ~ (x+0|g) + (1|g) + (1|a/b))
+```
+
+Random effects section gives you nested hierarchical structure for slopes and intercepts and combines this with smooth functions in a GAM.
+
+
+

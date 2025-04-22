@@ -1,0 +1,82 @@
+---
+title: "count_md"
+author: "Daphne Chevalier"
+date: "2024-10-23"
+output: html_document
+---
+  
+  ```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Packages
+```{r}
+library(ggplot2)
+library(glmmTMB)
+library(car)
+library(data.table)
+library(DHARMa)
+library(emmeans)
+```
+
+
+### Biomass data download
+```{r}
+biomass_c <- fread("../cleaned_data/biomass.csv")
+biomass_c <- biomass_c[, StartDate := as.Date(StartDate)]
+setnames(biomass_c, "Near", "0m")
+setnames(biomass_c, "Far", "5m")
+biomass_c <- melt(setDT(biomass_c[, !c("Total")]), id.vars = c("StartDate","Site", "Treatment"), variable.name = "Distance")
+setnames(biomass_c, "value", "Biomass")
+
+biomass_zeroes <- biomass_c[Biomass == 0]
+biomass_zeroes[, Phylum := "Arthropod"]
+setnames(biomass_zeroes, "Biomass", "Count")
+
+merge(pitfall_names, biomass_zeroes, all.x = TRUE, all.y = TRUE)
+
+biomass_c$Treatment <- factor(biomass_c$Treatment, levels=c("C","W","A"), ordered = FALSE)
+
+taxa_cols <- c("Class","Order","Family","Subfamily","Genus","Species")
+
+my_comparisons <- list(c("C","W"), c("C","A"), c("W","A"))
+```
+
+
+
+## Simple biomass model
+```{r}
+lme_biomass_simple <- glmmTMB(sqrt(Biomass) ~ Treatment * Distance  + (1|Site) + (1|Site:Distance),
+                       data = capture_size)
+plot(simulateResiduals(lme_biomass_simple))
+summary(lme_biomass_simple)
+emmgrid <- regrid(emmeans(lme_biomass_simple, specs=pairwise~Treatment, type="response"))
+#emmgrid$contrasts
+
+write_summary(coef(summary(lme_biomass_simple))$cond)
+
+lme_biomass_simple_c <- glmmTMB(sqrt(Biomass) ~ Treatment * Distance  + (1|Site) + (1|Site:Distance),
+                        data = capture_size,
+                        contrasts = list(Treatment = contr.sum))
+Anova(lme_biomass_simple_c, type ="III")
+write_anova(Anova(lme_biomass_simple_c, type = "III"))
+
+
+simple_biomass_emmeans <- as.data.table(regrid(emmeans(lme_biomass_simple, list(pairwise ~ Treatment * Distance), adjust = "tukey", type = "response")))
+
+pdf("../plots/simple_regrid_biomass_emmeans.pdf", w = 15, h = 9)
+ggplot(simple_biomass_emmeans, aes(Distance, response, group = Treatment, fill = Treatment)) +
+  geom_col(position = "dodge") +
+  geom_errorbar(aes(ymin = response-SE, ymax = response+SE), position = "dodge") +
+  scale_fill_manual(values = c("C" = "black",
+                             "A" = "orange",
+                             "W" = "grey")) +
+  theme(panel.grid = element_blank()) +
+  labs(y = "Biomass (grams)", title = "Predicted biomass captured across treatments and distances") +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text=element_text(size=18),
+        axis.title=element_text(size=22,face="bold"),
+        title = element_text(size=22, face = "bold"),
+        legend.text = element_text(size = 20)) +
+  ylim(0, 5)
+dev.off()
+```

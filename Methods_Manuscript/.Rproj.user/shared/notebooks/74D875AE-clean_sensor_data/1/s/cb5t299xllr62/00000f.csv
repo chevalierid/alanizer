@@ -1,0 +1,2 @@
+"0","sensor_data <- fread(""../raw_data/raw_sensor_data_collated.csv"")"
+"0","metadata <- fread(""../raw_data/raw_sensor_metadata_collated.csv"")"

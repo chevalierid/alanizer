@@ -1,0 +1,28 @@
+{
+    "id": "77CEDA3A",
+    "path": null,
+    "project_path": null,
+    "type": "object_explorer",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1720548596576.0,
+    "source_on_save": false,
+    "relative_order": 11,
+    "properties": {
+        "id": "600f09c974414897ac88a0012c000ed8",
+        "name": "EMM.source",
+        "title": "EMM.source",
+        "language": "R",
+        "source_window_id": "",
+        "Source": "Source"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1720479233,
+    "encoding": "",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1720548596576,
+    "read_only": false,
+    "read_only_alternatives": []
+}

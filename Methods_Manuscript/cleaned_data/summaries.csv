@@ -1,0 +1,12 @@
+coef(summary(lme_biomass_simple))$cond,Estimate,Std. Error,z value,Pr(>|z|)
+(Intercept),1.34,0.129,10.4,2.04e-25
+TreatmentW,0.55,0.129,4.25,2.1e-05
+TreatmentA,0.622,0.133,4.68,2.83e-06
+Distance5m,-0.25,0.148,-1.69,0.0904
+TreatmentW:Distance5m,-0.57,0.183,-3.12,0.00181
+TreatmentA:Distance5m,-0.493,0.187,-2.63,0.00858
+"Anova(lme_biomass_simple_c, type = ""III"")",Chisq,Df,Pr(>Chisq)
+(Intercept),213,1,3.01e-48
+Treatment,30,2,3.08e-07
+Distance,21.7,1,3.22e-06
+Treatment:Distance,12.5,2,0.0019

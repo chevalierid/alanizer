@@ -1,0 +1,604 @@
+---
+title: "count_md"
+author: "Daphne Chevalier"
+date: "2024-10-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Packages
+```{r}
+library(ggplot2)
+library(ggpubr)
+library(ggsignif)
+library(data.table)
+library(igraph)
+library(scales)
+library(vegan)
+library(RColorBrewer)
+library(lme4)
+library(DHARMa)
+library(performance)
+library(mvabund)
+library(emmeans)
+library(glmmTMB)
+library(dlookr)
+library(multcomp)
+library(multcompView)
+library(stringr)
+```
+
+## Setup
+
+### Count data download
+
+```{r}
+all_pitfall_names <- fread("../raw_data/pitfall_names_241024.csv", header = FALSE)
+
+setnames(all_pitfall_names, "V1", "FullName")
+
+all_pitfall_names <- all_pitfall_names[grep("debris", FullName, invert = TRUE)]
+all_pitfall_names <- all_pitfall_names[grep("multiple_insects", FullName, invert = TRUE)]
+all_pitfall_names$FullName <- gsub(" ", "_", all_pitfall_names$FullName)
+all_pitfall_names[, c("Root","Filename") := tstrsplit(FullName, "\\/+(?!\\S*\\/)", perl = TRUE)]
+all_pitfall_names[, c("Root","Phylum","Class","Order","Family","Subfamily","Genus","Species") := tstrsplit(Root, "/")]
+all_pitfall_names[, c("StartDate", "Site", "PrescribedTreatment", "Distance") := tstrsplit(Filename, "_", fixed = TRUE, type.convert = TRUE)[1:4]]
+all_pitfall_names[, Distance := strtrim(Distance, 2)]
+all_pitfall_names[, StartDate := as.Date(StartDate)]
+all_pitfall_names[, id := .I]
+all_pitfall_names <- all_pitfall_names[StartDate > as.Date("2023-06-21")]
+
+metatable <- fread("../cleaned_data/metadata.csv")
+metatable <- metatable[!is.na(Site)]
+
+pitfall_names <- all_pitfall_names[metatable, Treatment := i.Treatment, on=.(Site, StartDate)]
+pitfall_names <- pitfall_names[Treatment %in% c("A","C","W")]
+pitfall_names$Treatment <- factor(pitfall_names$Treatment, levels=c("C","A","W"), ordered = FALSE)
+
+pitfall_names <- pitfall_names[Class != "unclassified_arthropod"]
+```
+
+### Biomass data download
+```{r}
+biomass_c <- fread("../cleaned_data/biomass.csv")
+biomass_c <- biomass_c[, StartDate := as.Date(StartDate)]
+setnames(biomass_c, "Near", "0m")
+setnames(biomass_c, "Far", "5m")
+biomass_c <- melt(setDT(biomass_c[, !c("Total")]), id.vars = c("StartDate","Site", "Treatment"), variable.name = "Distance")
+setnames(biomass_c, "value", "Biomass")
+
+first_julian_biomass <- julian(min(biomass_c$StartDate))
+biomass_c[, StartDateJulian := as.numeric(julian(StartDate)) - as.numeric(first_julian_biomass)]
+biomass_c[,StartDateJulian := scale(StartDateJulian)]
+biomass_c
+
+biomass_zeroes <- biomass_c[Biomass == 0]
+biomass_zeroes[, Phylum := "Arthropod"]
+setnames(biomass_zeroes, "Biomass", "Count")
+
+merge(pitfall_names, biomass_zeroes, all.x = TRUE, all.y = TRUE)
+
+biomass_c$Treatment <- factor(biomass_c$Treatment, levels=c("C","W","A"), ordered = FALSE)
+
+taxa_cols <- c("Class","Order","Family","Subfamily","Genus","Species")
+
+my_comparisons <- list(c("C","W"), c("C","A"), c("W","A"))
+```
+
+### Add rows for each nested level
+We needed our table to be exhaustive, with a row for every taxonomic group. For example, if we counted x individuals of Species S within Genus G within Family F in a given pitfall trap, we wanted a row for each of these groups.
+```{r}
+wide_counts <- pitfall_names[, !c("FullName", "Root", "Filename", "PrescribedTreatment", "id")][, .N, by=.(Phylum, Class, Order, Family, Subfamily, Genus, Species, Site, Treatment, Distance, StartDate)]
+cols <- c("Phylum", "Class", "Order", "Family", "Subfamily", "Genus", "Species")
+f <- function(dt) {
+  i <- sum(!is.na(dt[,..cols]))
+  if (i > 1) {
+    dt <- dt[rep(1L, i)]
+    for (j in 2:i) set(dt, i = 1:(j - 1), j = j, NA)
+  }
+  dt
+}
+wide_counts <- wide_counts[,f(.SD), 1:nrow(wide_counts)][,nrow := NULL][
+  ,.(N = sum(N)), Phylum:StartDate
+]
+
+setnames(wide_counts, old = "N", new = "Count")
+```
+
+### Add Julian date and order treatments
+```{r}
+first_julian <- julian(min(wide_counts$StartDate))
+wide_counts[, StartDateJulian := as.numeric(julian(StartDate)) - as.numeric(first_julian)]
+wide_counts[,StartDateJulian := scale(StartDateJulian)]
+wide_counts
+
+wide_counts$Treatment <- factor(wide_counts$Treatment, levels=c("C","W","A"), ordered = FALSE)
+
+```
+
+## Size calculation
+
+```{r}
+capture_size <- wide_counts[Phylum == "Arthropoda" & is.na(Class)]
+capture_size <- capture_size[biomass_c, on = .(StartDate, Site, Treatment, Distance)]
+capture_size <- capture_size[Phylum == "Arthropoda"]
+
+capture_size[, Size := Biomass/Count * 1000]
+
+capture_size$Treatment <- factor(capture_size$Treatment, levels=c("C","W","A"), ordered = FALSE)
+```
+
+## Boxplots
+### Old
+```{r}
+# Count
+pdf("../plots/count_box_all.pdf", w = 15, h = 9)
+ggplot(capture_size, aes(Treatment,Count)) +
+  geom_boxplot(outlier.shape = NA) +
+  theme(axis.text=element_text(size=24),
+        axis.title=element_text(size=24,face="bold"),
+        title = element_text(size=25, face = "bold")) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(title = "More arthropods captured under white light than in darkness") +
+  stat_compare_means(method = "wilcox.test", comparisons = my_comparisons, size = 8)
+
+# Size
+pdf("../plots/size_box_all.pdf", w = 15, h = 9)
+ggplot(capture_size, aes(Treatment,Size)) +
+  geom_boxplot(outlier.shape = NA) +
+  theme(axis.text=element_text(size=22),
+        axis.title=element_text(size=22,face="bold"),
+        title = element_text(size=24, face = "bold")) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(title = "Larger arthropods (on average) captured under lit conditions") +
+  ylab("Size (mg/arthropod)") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_compare_means(method = "wilcox.test", comparisons = my_comparisons, size = 8)
+dev.off()
+```
+
+### Setup for faceted biomass/count/size boxplots
+```{r}
+bsc <- melt(capture_size[, c("Site", "Treatment", "Distance", "StartDateJulian", "Biomass", "Count", "Size")], 
+     id.vars = c("Site", "Treatment", "Distance", "StartDateJulian"), variable.name = "Measure")
+
+box_labels <- c('Biomass' = 'Arthropod biomass (g)', 'Count' = 'Total arthropod count', 'Size' = 'Arthropod biomass/count (mg)')
+```
+
+### Biomass, count, and size
+```{r}
+pdf("../plots/bsc_box_all.pdf", w = 15, h = 9)
+ggplot(bsc, aes(Treatment, value)) +
+  geom_boxplot() +
+  geom_point(alpha = 0.3, position = position_jitter(seed = 1, width = 0.2)) +
+  theme(panel.grid = element_blank()) +
+  labs(y="") +
+  theme(axis.text=element_text(size=16),
+        axis.title=element_text(size=22,face="bold"),
+        title = element_text(size=22, face = "bold"),
+        strip.text = element_text(size = 13)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_y_continuous(trans='log10') +
+    scale_x_discrete(labels = c("No light", "White", "Amber")) +
+  #stat_compare_means(method = "wilcox.test", comparisons = my_comparisons) +
+  facet_grid(rows = vars(Measure), scales = "free_y", labeller = labeller(Measure = box_labels))
+dev.off()
+```
+
+### Count and size
+```{r}
+pdf("../plots/countsize_box_all.pdf", w = 15, h = 9)
+ggplot(bsc[Measure == "Count" | Measure == "Size"], aes(Treatment, value)) +
+  geom_boxplot() +
+  geom_point(alpha = 0.3, position = position_jitter(seed = 1, width = 0.2)) +
+  theme(panel.grid = element_blank()) +
+  labs(y="") +
+  theme(axis.text=element_text(size=16),
+        axis.title=element_text(size=22,face="bold"),
+        title = element_text(size=22, face = "bold"),
+        strip.text = element_text(size = 13)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_y_continuous(trans='log10') +
+  scale_x_discrete(labels = c("No light", "White", "Amber")) +
+  #stat_compare_means(method = "wilcox.test", comparisons = my_comparisons) +
+  facet_grid(rows = vars(Measure), scales = "free_y", labeller = labeller(Measure = box_labels))
+dev.off()
+```
+
+### Biomass
+```{r}
+pdf("../plots/biomass_box_all.pdf", w = 15, h = 9)
+ggplot(bsc[Measure == "Biomass"], aes(Treatment, value)) +
+  geom_boxplot() +
+  #geom_point(alpha = 0.3, position = position_jitter(seed = 1, width = 0.2)) +
+  theme(panel.grid = element_blank()) +
+  labs(y = "Biomass (grams)", title = "Biomass captured across treatments") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(axis.text=element_text(size=16),
+        axis.title=element_text(size=22,face="bold"),
+        title = element_text(size=22, face = "bold"),
+        strip.text = element_text(size = 13)) +
+  ylim(0, 15) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_x_discrete(labels = c("No light", "White", "Amber"))
+dev.off()
+```
+
+### Count
+```{r}
+pdf("../plots/count_box_all.pdf", w = 15, h = 9)
+ggplot(capture_size, aes(Treatment,Count)) +
+  geom_boxplot(outlier.shape = NA) +
+  theme(axis.text=element_text(size=24),
+        axis.title=element_text(size=24,face="bold"),
+        title = element_text(size=25, face = "bold")) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(title = "More arthropods captured under white light than in darkness") +
+  stat_compare_means(method = "wilcox.test", comparisons = my_comparisons, size = 8)
+dev.off()
+```
+
+### Classes
+```{r}
+pdf("../plots/classes.pdf", w = 15, h = 9)
+ggplot(wide_counts[!is.na(Class) & is.na(Order), sum(Count), by=Class], aes(x = Class, fill = Class, y = V1)) +
+  geom_col() +
+  scale_fill_brewer(palette = "YlGnBu") +
+  theme(axis.text=element_text(size=24),
+        axis.title=element_text(size=24,face="bold"),
+        title = element_text(size=25, face = "bold")) +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="none") +
+  scale_y_continuous(trans='log10') +
+  labs(title = "Number of arthropods captured across classes") +
+  ylab("Count (log scale)")
+dev.off()
+```
+### Insect orders
+```{r}
+pdf("../plots/orders.pdf", w = 15, h = 9)
+ggplot(wide_counts[Class == "Insecta" & !is.na(Order) & is.na(Family), sum(Count), by=Order], aes(x = Order, fill = Order, y = V1)) +
+  geom_col() +
+  scale_fill_brewer(palette = "YlGnBu") +
+  theme(axis.text=element_text(size=24),
+        axis.title=element_text(size=24,face="bold"),
+        title = element_text(size=25, face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust=1)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="none") +
+  scale_y_continuous(trans='log10') +
+  labs(title = "Number of insects captured across orders") +
+  ylab("Count (log scale)")
+dev.off()
+```
+## Simple biomass model
+```{r}
+#lme_biomass <- glmmTMB(Biomass ~ Treatment * Distance + StartDateJulian + (1|Site) + (1|Site:Distance),
+lme_biomass <- glmmTMB(sqrt(Biomass) ~ Treatment * Distance,
+                      data = biomass_c)
+plot(simulateResiduals(lme_biomass))
+summary(lme_biomass)
+emmgrid <- emmeans(lme_biomass, specs=pairwise~Treatment*Distance, type="response")
+emmgrid$contrasts
+emmeans(lme_biomass, list(pairwise ~ Treatment), adjust = "tukey")
+```
+
+
+## Pooled count model, only treatment
+```{r}
+lme_count_lim <- glmmTMB(Count ~ Treatment,
+                      data = wide_counts[Phylum == "Arthropoda" & is.na(Class)],
+                     family = "nbinom2")
+plot(simulateResiduals(lme_count_lim))
+#r2_nakagawa(lme_count)
+summary(lme_count_lim)
+emmeans(lme_count_lim, list(pairwise ~ Treatment), adjust = "tukey")
+```
+
+## Pooled count model
+```{r}
+lme_count <- glmmTMB(Count ~ Treatment * Distance + StartDateJulian + (1|Site) + (1|Site:Distance),
+                      data = wide_counts[Phylum == "Arthropoda" & is.na(Class)],
+                     family = "nbinom2")
+plot(simulateResiduals(lme_count))
+
+#r2_nakagawa(lme_count)
+summary(lme_count)
+emmeans(lme_count, list(pairwise ~ Treatment), adjust = "tukey")
+```
+
+## Pooled size model
+```{r}
+lme_size <- lmer(sqrt(Size) ~ Treatment * Distance + StartDateJulian + (1|Site) + (1|Site:Distance), data = capture_size)
+summary(lme_size)
+plot(simulateResiduals(lme_size))
+emmeans(lme_size, list(pairwise ~ Treatment), adjust = "tukey")
+anova(lme_size)
+r2_nakagawa(lme_size)
+```
+
+# Taxon-specific models
+## Classes
+Add zero rows.
+```{r}
+zero_classes <- wide_counts[!is.na(Class) & is.na(Order) & !is.na(Treatment), .SD, .SDcols = c("Class", "Site", "Treatment", "Distance", "StartDateJulian", "Count")]
+
+zero_classes <- zero_classes[
+  CJ(Class = Class,
+     Site = Site,
+     Distance = Distance,
+     StartDateJulian = StartDateJulian,
+     unique = TRUE), 
+  on = .(Class, Site, Distance, StartDateJulian)
+]
+
+zero_classes[, .N, by=.(Site, StartDateJulian, Class, Distance)]
+
+setnafill(zero_classes, fill = 0, cols=c("Count"))
+```
+
+
+
+
+
+Select most-frequently-occurring taxa.
+```{r}
+classes <- zero_classes[, sum(Count), by=Class][zero_classes, on=c("Class")][V1>0.03*sum(unique(V1))][,.SD, .SDcols = !c('V1')]
+factor_cols <- c("Class", "Distance", "Site")
+classes[, (factor_cols) := lapply(.SD, factor, ordered = FALSE), .SDcols = factor_cols]
+```
+
+Model.
+```{r}
+lme_class_1 <- glmmTMB(Count ~ Class + Treatment : Class + Treatment * Distance + StartDateJulian + (1|Site) + (1|Site:Distance),
+                     data = classes,
+                     ziformula= ~1,
+                     family="nbinom2")
+plot(simulateResiduals(lme_class_1))
+testZeroInflation(simulateResiduals(lme_class_1))
+testDispersion(simulateResiduals(lme_class_1), type = "DHARMa")
+testOutliers(simulateResiduals(lme_class_1))
+
+lme_class <- glmmTMB(Count ~ Class * Treatment * Distance + StartDateJulian + (1|Site) + (1|Site:Distance),
+                     data = classes,
+                     ziformula= ~1,
+                     family="nbinom2")
+plot(simulateResiduals(lme_class))
+```
+
+Plot.
+```{r}
+emmeans(lme_class_1, ~Treatment * Class, type="response")
+plot(emmeans(lme_class_1, ~Treatment | Class, type="response"), comparisons = TRUE)
+pairs(emmeans(lme_class_1, ~Class * Treatment, type="response"), simple = "each", adjust = "holm")
+```
+
+
+
+Per trap.
+```{r}
+# we want a stacked bar graph
+classes[, .N, by=c("StartDateJulian", "Treatment")]
+classes[Count > 0, .N, by=c("Treatment", "Class")]
+classes[, .(Traps = .N), by=.(Class, Distance, Treatment)]
+#[, .(Number = sum(Count), PerTrap = sum(Count)/Traps), by=.(Class, Distance, Treatment)]
+pitfall_classes <- classes[, .(Traps = .N, Number = sum(Count), PerTrap = sum(Count)/.N), by=.(Class, Distance, Treatment)]
+
+```
+
+
+## Families
+Get the families, add zero rows.
+```{r}
+families <- wide_counts[!is.na(Family) & is.na(Subfamily), .SD, .SDcols = c("Family", "Site", "Treatment", "Distance", "StartDateJulian", "Count")]
+families <- families[
+  CJ(Family = Family,
+     Site = Site,
+     Distance = Distance,
+     StartDateJulian = StartDateJulian,
+     unique = TRUE), 
+  on = .(Family, Site, Distance, StartDateJulian)
+]
+setnafill(families, fill = 0, cols=c("Count"))
+```
+
+Filter on frequency.
+```{r}
+families_freq <- families[families[, sum(Count), by=Family][V1>0.01*sum(unique(V1))], on=c("Family")]
+```
+
+Model.
+```{r}
+lme_fam_1 <- glmmTMB(Count ~ Family + Treatment : Family + Treatment * Distance + StartDateJulian + (1|Site) + (1|Site:Distance),
+                     data = families_freq,
+                     ziformula=~1,
+                     family=nbinom2)
+
+plot(simulateResiduals(lme_fam_1))
+```
+
+Plot.
+```{r}
+plot(emmeans(lme_fam_1, ~Treatment | Family, type="response"), comparisons = TRUE)
+pairs(emmeans(lme_fam_1, ~Family * Treatment, type="response"), simple = "each", adjust = "holm")
+```
+
+Other model.
+```{r}
+lme_fam_dist <- glmmTMB(Count ~ Family * Treatment * Distance + StartDateJulian + (1|Site) + (1|Site:Distance),
+                         data = families_freq,
+                         ziformula=~1,
+                         family=nbinom2)
+summary(lme_fam_dist)
+plot(emmeans(lme_fam_dist, ~Treatment | Family, type="response"), comparisons = TRUE)
+
+pairs(emmeans(lme_fam_dist, ~Family * Treatment, type="response"), simple = "each", adjust = "holm")
+fam_dist_emms <-  emmeans(lme_fam_dist, ~ Treatment * Distance | Family)
+contrast(fam_dist_emms, interaction = "pairwise")
+```
+
+## Subfamilies
+Get the subfamilies, add zero rows.
+```{r}
+subfamilies <- wide_counts[!is.na(Subfamily) & is.na(Genus), .SD, .SDcols = c("Subfamily", "Site", "Treatment", "Distance", "StartDateJulian", "Count")]
+subfamilies <- subfamilies[
+  CJ(Subfamily = Subfamily,
+     Site = Site,
+     Treatment = Treatment,
+     Distance = Distance,
+     StartDateJulian = StartDateJulian,
+     unique = TRUE), 
+  on = .(Subfamily, Site, Treatment, Distance, StartDateJulian)
+]
+
+setnafill(subfamilies, fill = 0, cols=c("Count"))
+```
+
+Filter for frequency.
+```{r}
+subfamilies_freq <- subfamilies[subfamilies[, sum(Count), by=Subfamily][V1>0.01*sum(unique(V1))], on=c("Subfamily")]
+```
+
+Model.
+```{r}
+lme_sub_1 <- glmmTMB(Count ~ Subfamily * Treatment * Distance + StartDateJulian + (1|Site) + (1|Site:Distance),
+#lme_sub_1 <- glmmTMB(Count ~ Subfamily + Treatment : Subfamily + Treatment * Distance + StartDateJulian + (1|Site) + (1|Site:Distance),
+                     data = subfamilies_freq,
+                     ziformula=~1,
+                     family=nbinom2)
+#diagnose(lme_sub_1)
+plot(simulateResiduals(lme_sub_1))
+# testZeroInflation(simulateResiduals(lme_sub_1))
+# testDispersion(simulateResiduals(lme_sub_1), type = "DHARMa")
+# testOutliers(simulateResiduals(lme_sub_1))
+```
+
+Plot.
+```{r}
+emmeans(lme_sub_1, ~Treatment * Subfamily, type="response")
+pairs(emmeans(lme_sub_1, ~Subfamily * Treatment, type="response"), simple = "each", adjust = "holm")
+
+plot(emmeans(lme_sub_1, ~Treatment | Subfamily, type="response"), comparisons = TRUE)
+```
+
+
+## Genera
+Get the genera, add zero rows.
+```{r}
+genera <- wide_counts[!is.na(Genus) & is.na(Species), .SD, .SDcols = c("Genus", "Site", "Treatment", "Distance", "StartDateJulian", "Count")]
+genera <- genera[
+  CJ(Genus = Genus,
+     Site = Site,
+     Treatment = Treatment,
+     Distance = Distance,
+     StartDateJulian = StartDateJulian,
+     unique = TRUE), 
+  on = .(Genus, Site, Treatment, Distance, StartDateJulian)
+]
+
+genera <- setnafill(genera, fill = 0, cols=c("Count"))
+```
+
+Filter for frequency.
+```{r}
+genera_freq <- genera[genera[, sum(Count), by=Genus][V1>0.03*sum(unique(V1))], on=c("Genus")]
+```
+
+Model.
+```{r}
+lme_gen_1 <- glmmTMB(Count ~ Genus * Treatment * Distance + StartDateJulian + (1|Site) + (1|Site:Distance),
+#lme_gen_1 <- glmmTMB(Count ~ Genus + Treatment : Genus + Treatment * Distance + StartDateJulian + (1|Site) + (1|Site:Distance),
+                     data = genera_freq,
+                     ziformula=~1,
+                     family=nbinom2)
+summary(lme_gen_1)
+plot(simulateResiduals(lme_gen_1))
+testZeroInflation(simulateResiduals(lme_gen_1))
+testDispersion(simulateResiduals(lme_gen_1), type = "DHARMa")
+testOutliers(simulateResiduals(lme_gen_1))
+```
+
+Plot.
+```{r}
+emmeans(lme_gen_1, ~Treatment * Genus, type="response")
+pairs(emmeans(lme_gen_1, ~Genus * Treatment, type="response"), simple = "each", adjust = "holm")
+
+plot(emmeans(lme_gen_1, ~Treatment | Genus, type="response"), comparisons = TRUE)
+```
+
+
+
+
+## species
+Get the species, add zero rows.
+```{r}
+species <- wide_counts[!is.na(Species), .SD, .SDcols = c("Species", "Site", "Treatment", "Distance", "StartDateJulian", "Count")]
+species <- species[
+  CJ(Species = Species,
+     Site = Site,
+     Treatment = Treatment,
+     Distance = Distance,
+     StartDateJulian = StartDateJulian,
+     unique = TRUE), 
+  on = .(Species, Site, Treatment, Distance, StartDateJulian)
+]
+
+species <- setnafill(species, fill = 0, cols=c("Count"))
+```
+
+Filter for frequency.
+```{r}
+species_freq <- species[species[, sum(Count), by=Species][V1>0.03*sum(unique(V1))], on=c("Species")]
+```
+
+Model.
+```{r}
+lme_spec_1 <- glmmTMB(Count ~ Species + Treatment : Species + Treatment * Distance + StartDateJulian + (1|Site) + (1|Site:Distance),
+                     data = species_freq,
+                     ziformula=~1,
+                     family=nbinom2)
+summary(lme_spec_1)
+plot(simulateResiduals(lme_spec_1))
+testZeroInflation(simulateResiduals(lme_spec_1))
+testDispersion(simulateResiduals(lme_spec_1), type = "DHARMa")
+testOutliers(simulateResiduals(lme_spec_1))
+```
+
+Plot.
+```{r}
+emmeans(lme_spec_1, ~Treatment * Species, type="response")
+pairs(emmeans(lme_spec_1, ~Species * Treatment, type="response"), simple = "each", adjust = "holm")
+
+plot(emmeans(lme_spec_1, ~Treatment | Species, type="response"), comparisons = TRUE)
+```
+
+
+
+## Plotting emmeans
+```{r}
+lme_fam_1_summary <- summary(emmeans(lme_fam_1, ~Treatment : Family, type="response"), 
+                             comparisons = TRUE)
+
+lme_fam_1_means <- emmeans(object = lme_fam_1,
+                             specs = ~ Treatment : Family,
+                           type = "response")
+
+lme_fam_1_cld <- cld(object = lme_fam_1_means,
+                       adjust = "Tukey",
+                       Letters = letters,
+                       alpha = 0.05)
+lme_fam_1_cld
+```
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

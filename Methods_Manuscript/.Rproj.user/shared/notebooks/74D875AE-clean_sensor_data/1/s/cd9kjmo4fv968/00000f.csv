@@ -1,0 +1,2 @@
+"0","sensor_data[, StartDate := nafill(StartDate, type=""locf"")]"
+"0","sensor_data[, StartDate := as.Date(StartDate)]"
